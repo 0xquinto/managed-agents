@@ -66,19 +66,21 @@ Callable agents are resolved from the orchestrator's config. No need to referenc
 - **Session threads** = where you drill into a specific agent's reasoning and tool calls.
 - Session status aggregates all threads: if any thread is `running`, session is `running`.
 
+Note: The `ant` CLI does not yet have thread subcommands. Use the REST API directly.
+
 List threads:
-```bash
-ant beta:sessions:threads list --session-id "$SESSION_ID"
+```
+GET /v1/sessions/$SESSION_ID/threads
 ```
 
 Stream events from a specific thread:
-```bash
-ant beta:sessions:threads stream --session-id "$SESSION_ID" --thread-id "$THREAD_ID"
+```
+GET /v1/sessions/$SESSION_ID/threads/$THREAD_ID/stream
 ```
 
 List past events for a thread:
-```bash
-ant beta:sessions:threads:events list --session-id "$SESSION_ID" --thread-id "$THREAD_ID"
+```
+GET /v1/sessions/$SESSION_ID/threads/$THREAD_ID/events
 ```
 
 ### Multiagent event types
