@@ -38,72 +38,127 @@ OPTIONS:
 
 ## API Reference
 
-### File operations
+### Overview
 
-Files are standalone resources that can be:
-- Uploaded independently via the Files API
-- Mounted into sessions as resources
-- Referenced by file_id in session resource configs
+Files are standalone resources that can be uploaded independently and mounted into session containers. The Files API uses the `files-api-2025-04-14` beta header (set automatically by the SDK).
 
 ### Upload a file
 
 ```bash
-ant beta:files upload --file ./path/to/file.txt
+ant beta:files upload --file ./data.csv
 ```
 
 Returns a file object with `id` (file_id), `filename`, `size_bytes`, `created_at`.
 
-### Download a file
+### Mounting files at session creation
+
+Mount uploaded files into the container by adding them to the `resources` array when creating a session. The `mount_path` is optional but give the file a descriptive name so the agent knows what to look for.
 
 ```bash
-ant beta:files download --file-id "file_abc123" -o ./downloaded.txt
+ant beta:sessions create <<YAML
+agent: $AGENT_ID
+environment_id: $ENVIRONMENT_ID
+resources:
+  - type: file
+    file_id: $FILE_ID
+    mount_path: /workspace/data.csv
+YAML
 ```
 
-### Get file metadata
+A new `file_id` is created for the session-scoped copy. These copies do not count against storage limits.
 
-```bash
-ant beta:files retrieve-metadata --file-id "file_abc123"
+### Multiple files
+
+Mount multiple files by adding entries to the `resources` array. Maximum 100 files per session.
+
+```json
+{
+  "resources": [
+    { "type": "file", "file_id": "file_abc123", "mount_path": "/workspace/data.csv" },
+    { "type": "file", "file_id": "file_def456", "mount_path": "/workspace/config.json" },
+    { "type": "file", "file_id": "file_ghi789", "mount_path": "/workspace/src/main.py" }
+  ]
+}
 ```
 
-### List files
+### Managing files on a running session
 
-```bash
-ant beta:files list
-```
-
-Filter by session scope:
-```bash
-ant beta:files list --scope-id "$SESSION_ID"
-```
-
-### Delete a file
-
-```bash
-ant beta:files delete --file-id "file_abc123"
-```
-
-### Using files in sessions
-
-After uploading, mount files into sessions via session resources:
+Add files after session creation:
 
 ```bash
 ant beta:sessions:resources add \
   --session-id "$SESSION_ID" \
   --file-id "$FILE_ID" \
-  --type file \
-  --mount-path "/mnt/session/uploads/myfile.txt"
+  --type file
 ```
 
-Default mount path: `/mnt/session/uploads/<file_id>`
+Returns a resource object with `id` (`sesrsc_01ABC...`).
 
-Files, environments, and agents are independent resources -- not affected by session deletion.
+List resources:
+```bash
+ant beta:sessions:resources list --session-id "$SESSION_ID"
+```
+
+Remove a file:
+```bash
+ant beta:sessions:resources delete \
+  --session-id "$SESSION_ID" \
+  --resource-id "$RESOURCE_ID"
+```
+
+### Listing and downloading session files
+
+List files scoped to a session:
+```bash
+ant beta:files list --scope-id "$SESSION_ID"
+```
+
+Download a file:
+```bash
+ant beta:files download --file-id "$FILE_ID" -o ./output.txt
+```
+
+### Get file metadata
+
+```bash
+ant beta:files retrieve-metadata --file-id "$FILE_ID"
+```
+
+### Delete a file
+
+```bash
+ant beta:files delete --file-id "$FILE_ID"
+```
+
+### Supported file types
+
+The agent can work with any file type:
+
+- **Source code**: `.py`, `.js`, `.ts`, `.go`, `.rs`, etc.
+- **Data files**: `.csv`, `.json`, `.xml`, `.yaml`
+- **Documents**: `.txt`, `.md`
+- **Archives**: `.zip`, `.tar.gz` — the agent can extract these using bash
+- **Binary files** — the agent can process these with appropriate tools
+
+### File path behavior
+
+- Files mounted in the container are **read-only copies**. The agent can read them but cannot modify the original uploaded file.
+- Parent directories are created automatically.
+- Paths should be absolute (starting with `/`).
+- To work with modified versions, the agent writes to new paths within the container.
+
+### Key details
+
+- Files, environments, and agents are independent resources — not affected by session deletion.
+- The Files API uses the `files-api-2025-04-14` beta header in addition to the managed agents header.
+- Default mount path when none specified: `/mnt/session/uploads/<file_id>`
 
 ## Rules
 
 - Return 1-2 sentence summaries to lead-0
 - Write verbose output to $RUN_DIR/provisioned/files.json
-- Only call `ant beta:files` commands
-- All requests require managed-agents-2026-04-01 beta header
+- Only call `ant beta:files` commands (session resource commands are handled by sessions-expert)
+- All requests require managed-agents-2026-04-01 beta header; Files API also requires files-api-2025-04-14
 - Read file requirements from $RUN_DIR/design/agent-specs.json
 - Write uploaded file IDs to $RUN_DIR/provisioned/files.json as [{file_id, filename}]
-- After uploading, report file_ids to lead-0 so sessions-expert can mount them
+- After uploading, report file_ids to lead-0 so sessions-expert can mount them via the resources array
