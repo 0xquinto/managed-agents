@@ -198,11 +198,11 @@ Example `$RUN_DIR/provisioned/sessions.json`:
 ]
 ```
 
-### Phase 4 — Smoke test
+### Phase 4 — Validation
 
-`lead-0` dispatches `events-expert` with:
-- The session ID from `$RUN_DIR/provisioned/sessions.json`
-- The smoke test prompt from `$RUN_DIR/design/agent-specs.json`
+`lead-0` dispatches `events-expert` with the session ID and either a smoke test prompt or an outcome definition from `$RUN_DIR/design/agent-specs.json`.
+
+#### Mode A — Simple smoke test (default)
 
 `events-expert`:
 
@@ -238,6 +238,36 @@ Stop reason: end_turn
 ```
 
 Returns to lead-0: `"Smoke test passed. Agent responded correctly in 1 turn with no tool errors."` or failure details.
+
+#### Mode B — Outcome-based validation (when rubric provided)
+
+`events-expert`:
+
+1. **Sends define_outcome event** (requires `managed-agents-2026-04-01-research-preview` beta header):
+```bash
+ant beta:sessions:events send \
+  --session-id "$SESSION_ID" \
+  --beta managed-agents-2026-04-01-research-preview \
+  --event '{type: user.define_outcome, description: "...", rubric: {type: text, content: "..."}, max_iterations: 5}'
+```
+
+2. **Streams SSE events**, watches for outcome evaluation cycle:
+   - `span.outcome_evaluation_start` → note iteration number
+   - `span.outcome_evaluation_ongoing` → heartbeat
+   - `span.outcome_evaluation_end` → check `result`
+   - `session.status_idle` → done
+
+3. Writes `$RUN_DIR/test/result.md`:
+```
+Status: SATISFIED
+Agent: My Agent (agt_01abc123)
+Outcome: "Build a DCF model..."
+Iterations: 2
+Result: satisfied
+Explanation: All 12 criteria met...
+```
+
+Returns to lead-0: `"Outcome satisfied after 2 iterations."` or `"Outcome failed: [explanation]"`.
 
 **Durable run log**: `events.json` is written incrementally. If `events-expert` crashes mid-stream, the partial log survives. lead-0 can re-spawn `events-expert` and it can check whether a session already exists before creating a new one.
 
@@ -324,9 +354,21 @@ runs/
     },
     "resources": [],
     "vault_ids": [],
-    "smoke_test_prompt": "Write a Python function that returns the nth Fibonacci number."
+    "smoke_test_prompt": "Write a Python function that returns the nth Fibonacci number.",
+    "outcome": null
   }
 ]
+```
+
+With outcome-based validation:
+```json
+{
+  "outcome": {
+    "description": "Build a DCF model for Costco in .xlsx",
+    "rubric": { "type": "text", "content": "# DCF Model Rubric\n..." },
+    "max_iterations": 5
+  }
+}
 ```
 
 For teams, additional fields:
@@ -442,5 +484,4 @@ Bash is whitelisted per-prefix. No wildcard `Bash(*)`. Credentials never appear 
 - Agent versioning / update flows (create only, no update)
 - Persistent agent registry across runs (agent IDs are in the run directory only)
 - Multi-turn interactive sessions (smoke test is one-shot only)
-- Define outcomes (research preview)
 - Memory (research preview)

@@ -41,7 +41,7 @@ Events flow in two directions: user events (you send) and agent/session/span eve
 | `user.interrupt` | Stop agent mid-execution |
 | `user.custom_tool_result` | Response to custom tool call |
 | `user.tool_confirmation` | Approve/deny tool call when permission policy requires it |
-| `user.define_outcome` | Define outcome for agent (research preview) |
+| `user.define_outcome` | Define outcome with rubric and iteration limit. Agent works toward it autonomously. Requires `managed-agents-2026-04-01-research-preview` beta header. |
 
 #### Agent events
 
@@ -67,7 +67,7 @@ Events flow in two directions: user events (you send) and agent/session/span eve
 | `session.status_rescheduled` | Transient error, retrying |
 | `session.status_terminated` | Unrecoverable error |
 | `session.error` | Error with `retry_status` |
-| `session.outcome_evaluated` | Outcome evaluation terminal (research preview) |
+| `session.outcome_evaluated` | Outcome evaluation reached terminal status |
 | `session.thread_created` | New multiagent thread spawned |
 | `session.thread_idle` | Multiagent thread finished |
 
@@ -77,6 +77,9 @@ Events flow in two directions: user events (you send) and agent/session/span eve
 |---|---|
 | `span.model_request_start` | Model inference started |
 | `span.model_request_end` | Model inference completed (includes model_usage) |
+| `span.outcome_evaluation_start` | Grader started evaluating an iteration. Includes `outcome_id` and `iteration` (0-indexed). |
+| `span.outcome_evaluation_ongoing` | Heartbeat while grader runs. Grader reasoning is opaque. |
+| `span.outcome_evaluation_end` | Grader finished. Includes `result`, `explanation`, `iteration`, and `usage`. |
 
 ### Sending events
 
@@ -159,6 +162,73 @@ When events have `session_thread_id`:
 - `text`: `{"type": "text", "text": "..."}`
 - `image`: `{"type": "image", "source": {"type": "base64"|"url"|"file", ...}}`
 - `document`: `{"type": "document", "source": {"type": "base64"|"text"|"url"|"file", ...}}`
+
+### Define outcomes
+
+Outcomes turn a session from conversation into goal-directed work. Send a `user.define_outcome` event — no additional `user.message` is needed; the agent starts working immediately.
+
+Requires the additional beta header `managed-agents-2026-04-01-research-preview`.
+
+```bash
+ant beta:sessions:events send \
+  --session-id "$SESSION_ID" \
+  --beta managed-agents-2026-04-01-research-preview <<'YAML'
+events:
+  - type: user.define_outcome
+    description: Build a DCF model for Costco in .xlsx
+    rubric:
+      type: text
+      content: |
+        # DCF Model Rubric
+        ## Revenue Projections
+        - Uses historical revenue data from the last 5 fiscal years
+        - Projects revenue for at least 5 years forward
+        ## Output Quality
+        - All figures in a single .xlsx file with labeled sheets
+    max_iterations: 5
+YAML
+```
+
+Fields:
+- `description` — what to build
+- `rubric` — scoring criteria as `{type: "text", content: "..."}` or `{type: "file", file_id: "file_..."}` (uploaded via Files API)
+- `max_iterations` — revision cycles (default 3, max 20)
+
+Only one outcome at a time. Chain outcomes by sending a new `user.define_outcome` after the previous one completes.
+
+#### Outcome evaluation events
+
+The grader runs in a separate context window after each iteration:
+
+1. `span.outcome_evaluation_start` — grader begins. `iteration` is 0-indexed (0 = first evaluation).
+2. `span.outcome_evaluation_ongoing` — heartbeat while grader works.
+3. `span.outcome_evaluation_end` — grader verdict:
+
+| Result | What happens next |
+|---|---|
+| `satisfied` | Session goes idle. Outcome met. |
+| `needs_revision` | Agent starts another iteration. |
+| `max_iterations_reached` | Agent may run one final revision, then idle. |
+| `failed` | Session goes idle. Rubric fundamentally doesn't match the task. |
+| `interrupted` | Only if `user.interrupt` was sent after evaluation started. |
+
+The `span.outcome_evaluation_end` event includes `explanation` (per-criterion breakdown) and `usage` (grader token counts).
+
+#### Checking outcome status
+
+Poll session retrieve or listen on the stream:
+```bash
+ant beta:sessions retrieve --session-id "$SESSION_ID"
+```
+The response includes `outcome_evaluations[].result` with the latest status.
+
+#### Retrieving deliverables
+
+The agent writes output files to `/mnt/session/outputs/`. Fetch them via:
+```bash
+ant beta:files list --scope-id "$SESSION_ID"
+ant beta:files download --file-id "$FILE_ID" -o ./output.xlsx
+```
 
 ### processed_at
 

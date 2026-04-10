@@ -123,9 +123,12 @@ ant beta:sessions create \
   "usage": { "input_tokens": 0, "output_tokens": 0 },
   "created_at": "...",
   "updated_at": "...",
-  "archived_at": null
+  "archived_at": null,
+  "outcome_evaluations": []
 }
 ```
+
+The `outcome_evaluations` array is populated when outcomes are used (research preview, requires `managed-agents-2026-04-01-research-preview` beta header). Each entry contains `outcome_id` and `result` (`satisfied`, `needs_revision`, `max_iterations_reached`, `failed`, `interrupted`).
 
 ### MCP authentication through vaults
 

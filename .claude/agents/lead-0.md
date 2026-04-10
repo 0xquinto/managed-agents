@@ -55,6 +55,7 @@ Interview the user one question at a time. Cover:
 11. **Resources** — GitHub repos or files to mount
 12. **Vaults** — existing vault IDs for MCP auth, or create new
 13. **Smoke test prompt** — what to send to verify the agent works
+14. **Outcome (optional)** — if the user wants goal-directed validation: description, rubric (inline or file), max_iterations (default 3, max 20). Requires research preview access.
 
 For teams: repeat agent-level questions for each agent, then ask about callable_agents handoff.
 
@@ -80,7 +81,11 @@ Each specialist reads from `$RUN_DIR/design/agent-specs.json` and writes to `$RU
 
 ## Phase 4 — Smoke test
 
-Dispatch `events-expert` with the session ID and smoke test prompt.
+Dispatch `events-expert` with the session ID and either:
+- **Simple smoke test**: one-shot message, wait for response
+- **Outcome-based test**: `user.define_outcome` with rubric, agent iterates until satisfied or max_iterations reached
+
+Use outcome-based test when the user provided a rubric in Phase 1.
 
 ## Phase 5 — Summary
 
