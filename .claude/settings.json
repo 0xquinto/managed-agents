@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [
+      "Read",
+      "Write",
+      "Glob",
+      "Grep",
+      "Bash(ant beta:agents *)",
+      "Bash(ant beta:agents:versions *)",
+      "Bash(ant beta:environments *)",
+      "Bash(ant beta:sessions *)",
+      "Bash(ant beta:sessions:events *)",
+      "Bash(ant beta:sessions:resources *)",
+      "Bash(ant beta:skills *)",
+      "Bash(ant beta:skills:versions *)",
+      "Bash(ant beta:vaults *)",
+      "Bash(ant beta:vaults:credentials *)",
+      "Bash(ant beta:files *)",
+      "Bash(ant --version)",
+      "Bash(mkdir *)",
+      "Bash(ln -sfn *)",
+      "Bash(ls *)"
+    ],
+    "deny": []
+  }
+}
