@@ -3,7 +3,7 @@
 
 ## Purpose
 
-A Claude Code agent pipeline that guides a developer through designing, provisioning, and smoke-testing Claude Managed Agents via the Anthropic API. Entirely terminal-driven; no web UI. Same structural patterns as the job-research pipeline (lead + subagents, run-scoped directories, summary-only returns, CLAUDE.md contract), with Managed Agents API patterns layered on top (brain ≠ hands, on-demand environments, durable run log, credential isolation).
+A Claude Code agent pipeline that guides a developer through designing, provisioning, and smoke-testing Claude Managed Agents via the Anthropic API. Entirely terminal-driven; no web UI. Same structural patterns as the job-research pipeline (lead + subagents, run-scoped directories, summary-only returns, CLAUDE.md contract), with **one specialist agent per documentation domain** so each agent carries the full API reference for its area.
 
 ---
 
@@ -11,38 +11,106 @@ A Claude Code agent pipeline that guides a developer through designing, provisio
 
 ### Agents
 
-| Agent | Model | Responsibility | Spawn mode |
-|---|---|---|---|
-| `lead-0` | Opus | Design dialogue (multi-turn Q&A) + orchestration | Root |
-| `provisioner-1` | Sonnet | POST agent definitions to API (brains only) | Foreground |
-| `env-tester-2` | Sonnet | Create environment, session, smoke test, stream events | Foreground |
+| # | Agent | Model | Domain | Docs source |
+|---|---|---|---|---|
+| 0 | `lead-0` | Opus | Design dialogue + orchestration | Routing table only |
+| 1 | `agents-expert` | Sonnet | Agent definitions CRUD, versioning, model config, system prompts, callable_agents | [agent-setup](https://platform.claude.com/docs/en/managed-agents/agent-setup) |
+| 2 | `environments-expert` | Sonnet | Container config, packages, networking, lifecycle | [environments](https://platform.claude.com/docs/en/managed-agents/environments) |
+| 3 | `sessions-expert` | Sonnet | Session lifecycle, resource mounting, metadata, vault references | [sessions](https://platform.claude.com/docs/en/managed-agents/sessions) |
+| 4 | `events-expert` | Sonnet | SSE streaming, all event types, interrupts, custom tool handling, stop reasons | [events-and-streaming](https://platform.claude.com/docs/en/managed-agents/events-and-streaming) |
+| 5 | `tools-expert` | Sonnet | Built-in toolset config, custom tools, permission policies | [tools](https://platform.claude.com/docs/en/managed-agents/tools), [permission-policies](https://platform.claude.com/docs/en/managed-agents/permission-policies) |
+| 6 | `multiagent-expert` | Sonnet | callable_agents, session threads, coordinator pattern, thread events | [multi-agent](https://platform.claude.com/docs/en/managed-agents/multi-agent) |
+| 7 | `skills-expert` | Sonnet | Skill CRUD, versioning, Anthropic vs custom skills | [skills](https://platform.claude.com/docs/en/managed-agents/skills) |
+| 8 | `mcp-vaults-expert` | Sonnet | MCP server declaration, vault CRUD, credential management, OAuth flows | [mcp-connector](https://platform.claude.com/docs/en/managed-agents/mcp-connector), [vaults](https://platform.claude.com/docs/en/managed-agents/vaults) |
+| 9 | `files-expert` | Sonnet | File upload, download, metadata, lifecycle | CLI: `ant beta:files` |
 
 `lead-0` is the only agent that spawns subagents. No nested spawning. Subagents return 1–2 sentence summaries; all verbose output goes to `$RUN_DIR/`.
 
-### Pipeline phases
+### CLI commands per specialist
+
+| Specialist | CLI commands |
+|---|---|
+| `agents-expert` | `ant beta:agents {create,retrieve,update,list,archive}`, `ant beta:agents:versions list` |
+| `environments-expert` | `ant beta:environments {create,retrieve,update,list,delete,archive}` |
+| `sessions-expert` | `ant beta:sessions {create,retrieve,update,list,delete,archive}`, `ant beta:sessions:resources {add,retrieve,update,list,delete}` |
+| `events-expert` | `ant beta:sessions:events {send,list,stream}` |
+| `tools-expert` | (configured on agents via `--tool` flag, no standalone CLI resource) |
+| `multiagent-expert` | (configured on agents via `callable_agents`, threads via sessions API) |
+| `skills-expert` | `ant beta:skills {create,retrieve,list,delete}`, `ant beta:skills:versions {create,retrieve,list,delete}` |
+| `mcp-vaults-expert` | `ant beta:vaults {create,retrieve,update,list,delete,archive}`, `ant beta:vaults:credentials {create,retrieve,update,list,delete,archive}` |
+| `files-expert` | `ant beta:files {upload,download,retrieve-metadata,list,delete}` |
+
+### System prompt structure
+
+Each specialist's system prompt follows this template:
+
+```
+You are the [domain] specialist for the Managed Agents orchestrator.
+
+## Your role
+[1-2 sentences about what you do]
+
+## CLI commands you own
+[exact `ant beta:*` commands with all flags from `--help`]
+
+## API reference
+[full docs content for your domain — endpoints, schemas, fields, examples]
+[CLI examples only — no curl with auth headers]
+
+## Rules
+- Return 1-2 sentence summaries to lead-0
+- Write verbose output (API responses, full specs) to $RUN_DIR/
+- Never call endpoints outside your domain
+- All requests require the managed-agents-2026-04-01 beta header
+```
+
+Credential rules are centralized in CLAUDE.md, not repeated per specialist.
+
+The docs content fetched from the live pages is what goes into each system prompt — the actual reference, not a summary.
+
+### lead-0 system prompt
+
+`lead-0` does NOT carry full API reference docs. It carries a **routing table**:
+
+```
+## Available specialists
+
+| Specialist | Owns | Call when |
+|---|---|---|
+| agents-expert | beta:agents, beta:agents:versions | Creating/updating agent definitions |
+| environments-expert | beta:environments | Setting up containers, packages, networking |
+| sessions-expert | beta:sessions, beta:sessions:resources | Starting sessions, mounting repos/files |
+| events-expert | beta:sessions:events | Sending messages, streaming, handling responses |
+| tools-expert | (agent tool config) | Configuring built-in/custom/MCP tools |
+| multiagent-expert | (callable_agents, threads) | Setting up agent teams |
+| skills-expert | beta:skills, beta:skills:versions | Attaching domain skills |
+| mcp-vaults-expert | beta:vaults, beta:vaults:credentials | MCP server auth, credential management |
+| files-expert | beta:files | Uploading/downloading files |
+```
+
+This keeps lead-0's context window free for multi-turn design dialogue and orchestration decisions.
+
+---
+
+## Pipeline Phases
 
 ```
 Phase 0   Readiness check (lead-0)
 Phase 1   Design dialogue (lead-0, direct with user)
 Phase 2   Human approval gate
-Phase 3   Brain provisioning (provisioner-1, foreground)
-Phase 4   On-demand environment + smoke test (env-tester-2, foreground)
+Phase 3   Provisioning (lead-0 dispatches specialists as needed)
+Phase 4   Smoke test (lead-0 dispatches events-expert)
 Phase 5   Summary (lead-0)
 ```
-
----
-
-## Phase Details
 
 ### Phase 0 — Readiness check
 
 `lead-0` runs these checks before any work:
 
-1. `echo $ANTHROPIC_API_KEY` — non-empty
-2. `ant --version` — CLI installed
-3. `curl --version` — available for SSE streaming fallback
+1. `ant --version` — CLI installed
+2. `ant beta:agents list --limit 1` — validates API key exists, is valid, and has managed agents access
 
-On any failure: print a clear error message with fix instructions, abort. No onboarding subagent (simpler than job-research; the fix instructions are short).
+On any failure: print a clear error message with fix instructions, abort.
 
 ### Phase 1 — Design dialogue
 
@@ -52,12 +120,17 @@ On any failure: print a clear error message with fix instructions, abort. No onb
 2. **Purpose** — one-sentence description of what it does
 3. **Single agent or team?** — if team, how many and what roles
 4. **Model** — Opus / Sonnet / Haiku (with guidance: Opus for reasoning-heavy, Sonnet for I/O)
-5. **Tools** — `agent_toolset_20260401` (full toolset) or specific tools (bash, file, web_search, etc.)
-6. **MCP servers** — any external integrations (named only, no credentials)
-7. **System prompt** — lead-0 drafts one based on answers, user confirms or edits
-8. **Smoke test prompt** — what question to send to verify the agent works
+5. **Tools** — `agent_toolset_20260401` (full toolset) or specific tools; custom tools needed?
+6. **Permission policies** — `always_allow` or `always_ask` for specific tools
+7. **MCP servers** — any external integrations (name + URL only, no credentials)
+8. **Skills** — Anthropic pre-built (xlsx, pptx, etc.) or custom skills
+9. **System prompt** — lead-0 drafts one based on answers, user confirms or edits
+10. **Environment** — packages needed, networking mode (unrestricted vs limited + allowed_hosts)
+11. **Resources** — GitHub repos or files to mount
+12. **Vaults** — existing vault IDs for MCP auth, or create new ones
+13. **Smoke test prompt** — what question to send to verify the agent works
 
-For teams: repeat questions 1–7 for each agent, then ask how agents hand off to each other.
+For teams: repeat agent-level questions for each agent, then ask about `callable_agents` handoff.
 
 Output: writes `$RUN_DIR/design/agent-specs.json` (array of agent definitions, no credentials).
 
@@ -72,7 +145,9 @@ Spec written to runs/2026-04-09T14-05-00/design/agent-specs.json
 │  Name:    My Agent                              │
 │  Model:   claude-sonnet-4-6                    │
 │  Tools:   agent_toolset_20260401               │
-│  MCP:     none                                  │
+│  MCP:     github (https://api.github...)       │
+│  Skills:  xlsx                                  │
+│  Env:     python-dev (pandas, numpy)           │
 │  System:  You are a helpful coding assistant…  │
 └─────────────────────────────────────────────────┘
 
@@ -81,74 +156,92 @@ Type "approved" to provision, or describe changes.
 
 If the user requests changes, `lead-0` updates the spec inline and re-displays. No re-running the full dialogue.
 
-### Phase 3 — Brain provisioning
+### Phase 3 — Provisioning
 
-`provisioner-1` reads `$RUN_DIR/design/agent-specs.json` and for each agent:
+`lead-0` dispatches specialists based on what the design requires. The order follows resource dependencies:
 
-```bash
-curl -sS --fail-with-body https://api.anthropic.com/v1/agents \
-  -H "x-api-key: $ANTHROPIC_API_KEY" \
-  -H "anthropic-version: 2023-06-01" \
-  -H "anthropic-beta: managed-agents-2026-04-01" \
-  -H "content-type: application/json" \
-  -d @agent-spec.json
+```
+1. files-expert        (if files need uploading)
+2. mcp-vaults-expert   (if vaults/credentials needed)
+3. skills-expert       (if custom skills need creating)
+4. agents-expert       (create agent definitions — depends on skills being created first)
+5. environments-expert (create environments — independent of agents)
+6. sessions-expert     (create session — depends on agent + environment)
 ```
 
-Writes `$RUN_DIR/provisioned/agents.json`:
+Steps 4 and 5 can run in parallel (agents and environments are independent resources).
+
+Each specialist:
+- Reads `$RUN_DIR/design/agent-specs.json` for its domain's config
+- Executes the required `ant beta:*` CLI commands
+- Writes results to `$RUN_DIR/provisioned/{domain}.json`
+- Returns 1-2 sentence summary to lead-0
+
+Example `$RUN_DIR/provisioned/agents.json`:
 ```json
 [
   { "name": "My Agent", "agent_id": "agt_...", "version": 1 }
 ]
 ```
 
-Returns to lead-0: `"Provisioned 1 agent: agt_01abc123"`.
-
-**Brain ≠ hands**: provisioner-1 never touches `/v1/environments` or `/v1/sessions`. Environment creation is deferred to Phase 4.
-
-### Phase 4 — On-demand environment + smoke test
-
-`env-tester-2` reads `$RUN_DIR/provisioned/agents.json` and `$RUN_DIR/design/agent-specs.json` (for the smoke test prompt), then:
-
-1. **Create environment** (on-demand, only now):
-```bash
-curl -sS --fail-with-body https://api.anthropic.com/v1/environments \
-  -H "..." \
-  -d '{"name":"smoke-test-env","config":{"type":"cloud","networking":{"type":"unrestricted"}}}'
+Example `$RUN_DIR/provisioned/environments.json`:
+```json
+[
+  { "name": "python-dev", "environment_id": "env_..." }
+]
 ```
 
-2. **Create session** (for first agent; or each agent if team):
-```bash
-curl -sS --fail-with-body https://api.anthropic.com/v1/sessions \
-  -H "..." \
-  -d "{\"agent\":\"$AGENT_ID\",\"environment_id\":\"$ENV_ID\",\"title\":\"smoke-test\"}"
+Example `$RUN_DIR/provisioned/sessions.json`:
+```json
+[
+  { "session_id": "ses_...", "agent_id": "agt_...", "environment_id": "env_..." }
+]
 ```
 
-3. **Send smoke test event**:
+### Phase 4 — Smoke test
+
+`lead-0` dispatches `events-expert` with:
+- The session ID from `$RUN_DIR/provisioned/sessions.json`
+- The smoke test prompt from `$RUN_DIR/design/agent-specs.json`
+
+`events-expert`:
+
+1. **Sends user message event**:
 ```bash
-curl -sS --fail-with-body https://api.anthropic.com/v1/sessions/$SESSION_ID/events \
-  -H "..." \
-  -d "{\"events\":[{\"type\":\"user.message\",\"content\":[{\"type\":\"text\",\"text\":\"$SMOKE_PROMPT\"}]}]}"
+ant beta:sessions:events send \
+  --session-id "$SESSION_ID" \
+  --event '{type: user.message, content: [{type: text, text: "$SMOKE_PROMPT"}]}'
 ```
 
-4. **Stream SSE events**, write raw stream to `$RUN_DIR/test/events.json`, watch for:
+2. **Streams SSE events**, writes raw stream to `$RUN_DIR/test/events.json`:
+```bash
+ant beta:sessions:events stream \
+  --session-id "$SESSION_ID"
+```
+
+3. Watches for:
    - `agent.message` → capture text
    - `agent.tool_use` → note tool calls
-   - `session.status_idle` → done
+   - `session.status_idle` → done (check `stop_reason`)
+   - `session.status_terminated` → failure
 
-5. Write `$RUN_DIR/test/result.md`:
+4. Handles `stop_reason: requires_action` by writing pending tool confirmations to `$RUN_DIR/test/pending-confirmations.json` and returning to lead-0 for user decision.
+
+5. Writes `$RUN_DIR/test/result.md`:
 ```
 Status: PASSED
 Agent: My Agent (agt_01abc123)
 Prompt: "What is 2+2?"
 Response: "4"
 Tool calls: none
+Stop reason: end_turn
 ```
 
-Returns to lead-0: `"Smoke test passed. Agent responded correctly in 1 turn with no tool errors."` or `"Smoke test failed: session.status_error — [details]"`.
+Returns to lead-0: `"Smoke test passed. Agent responded correctly in 1 turn with no tool errors."` or failure details.
 
-**Durable run log**: `events.json` is written incrementally. If `env-tester-2` crashes mid-stream, the partial log survives. lead-0 can re-spawn `env-tester-2` and it can check whether a session already exists before creating a new one.
+**Durable run log**: `events.json` is written incrementally. If `events-expert` crashes mid-stream, the partial log survives. lead-0 can re-spawn `events-expert` and it can check whether a session already exists before creating a new one.
 
-**Credential isolation**: `$ANTHROPIC_API_KEY` is read from env at runtime. Never written to any file. MCP server OAuth config is stored as a name reference only (e.g., `"oauth_provider": "github"`); actual tokens are managed by the Managed Agents vault outside this system.
+**Credential isolation**: `$ANTHROPIC_API_KEY` is read from env at runtime. Never written to any file. MCP server OAuth tokens are managed via vaults, referenced by ID only.
 
 ### Phase 5 — Summary
 
@@ -159,6 +252,12 @@ Returns to lead-0: `"Smoke test passed. Agent responded correctly in 1 turn with
 ## Agents provisioned
 - My Agent — agt_01abc123 (v1)
 
+## Environment
+- python-dev — env_01xyz789
+
+## Session
+- ses_01def456
+
 ## Smoke test
 - Status: PASSED
 - Prompt: "What is 2+2?"
@@ -166,7 +265,8 @@ Returns to lead-0: `"Smoke test passed. Agent responded correctly in 1 turn with
 
 ## Next steps
 - Agent ID for sessions: agt_01abc123
-- Docs: https://docs.anthropic.com/managed-agents
+- Environment ID: env_01xyz789
+- Docs: https://platform.claude.com/docs/en/managed-agents/overview
 ```
 
 Updates `runs/latest` symlink to current run directory.
@@ -182,11 +282,17 @@ runs/
       agent-specs.json        ← array of agent definitions (no credentials)
     provisioned/
       agents.json             ← {name, agent_id, version} per agent
+      environments.json       ← {name, environment_id} per environment
+      sessions.json           ← {session_id, agent_id, environment_id}
+      vaults.json             ← {vault_id, display_name} (if created)
+      skills.json             ← {skill_id, name, version} (if created)
+      files.json              ← {file_id, filename} (if uploaded)
     test/
       events.json             ← raw SSE event stream (append-only)
+      pending-confirmations.json ← tool confirmation requests (if any)
       result.md               ← pass/fail + response summary
     summary.md
-latest -> runs/2026-04-09T14-05-00/
+  latest -> runs/2026-04-09T14-05-00/
 ```
 
 ---
@@ -202,7 +308,22 @@ latest -> runs/2026-04-09T14-05-00/
     "tools": [
       { "type": "agent_toolset_20260401" }
     ],
+    "tool_permission_overrides": [
+      { "name": "bash", "permission_policy": { "type": "always_ask" } }
+    ],
     "mcp_servers": [],
+    "skills": [],
+    "callable_agents": [],
+    "environment": {
+      "name": "python-dev",
+      "config": {
+        "type": "cloud",
+        "packages": { "pip": ["pandas", "numpy"] },
+        "networking": { "type": "unrestricted" }
+      }
+    },
+    "resources": [],
+    "vault_ids": [],
     "smoke_test_prompt": "Write a Python function that returns the nth Fibonacci number."
   }
 ]
@@ -212,7 +333,11 @@ For teams, additional fields:
 ```json
 {
   "team": true,
-  "handoff": "orchestrator passes task to specialist by agent_id"
+  "callable_agents": [
+    { "type": "agent", "role": "reviewer" },
+    { "type": "agent", "role": "test-writer" }
+  ],
+  "handoff": "orchestrator delegates code review and test writing to specialists"
 }
 ```
 
@@ -224,14 +349,21 @@ No credentials, no API keys, no OAuth tokens in this file.
 
 ```
 .claude/
-  CLAUDE.md                  ← durable project contract
+  CLAUDE.md                    ← durable project contract
   agents/
-    lead-0.md                ← orchestrator (Opus)
-    provisioner-1.md         ← brain provisioner (Sonnet)
-    env-tester-2.md          ← environment + smoke test (Sonnet)
-  settings.json              ← tool permissions
-runs/                        ← all run output (gitignored)
-  latest -> ...              ← symlink to most recent run
+    lead-0.md                  ← orchestrator (Opus) — routing table only
+    agents-expert.md           ← agent-setup docs
+    environments-expert.md     ← environments docs
+    sessions-expert.md         ← sessions docs
+    events-expert.md           ← events-and-streaming docs
+    tools-expert.md            ← tools + permission-policies docs
+    multiagent-expert.md       ← multi-agent docs
+    skills-expert.md           ← skills docs
+    mcp-vaults-expert.md       ← mcp-connector + vaults docs
+    files-expert.md            ← files CLI reference
+  settings.json                ← tool permissions
+runs/                          ← all run output (gitignored)
+  latest -> ...                ← symlink to most recent run
 docs/
   superpowers/
     specs/
@@ -250,13 +382,18 @@ docs/
       "Write",
       "Glob",
       "Grep",
-      "Bash(curl -sS *)",
       "Bash(ant beta:agents *)",
+      "Bash(ant beta:agents:versions *)",
       "Bash(ant beta:environments *)",
       "Bash(ant beta:sessions *)",
-      "Bash(echo $ANTHROPIC_API_KEY)",
+      "Bash(ant beta:sessions:events *)",
+      "Bash(ant beta:sessions:resources *)",
+      "Bash(ant beta:skills *)",
+      "Bash(ant beta:skills:versions *)",
+      "Bash(ant beta:vaults *)",
+      "Bash(ant beta:vaults:credentials *)",
+      "Bash(ant beta:files *)",
       "Bash(ant --version)",
-      "Bash(curl --version)",
       "Bash(mkdir *)",
       "Bash(ln -sfn *)",
       "Bash(ls *)"
@@ -274,12 +411,14 @@ Bash is whitelisted per-prefix. No wildcard `Bash(*)`. Credentials never appear 
 
 - `lead-0` is the only agent that spawns subagents
 - All subagents return 1–2 sentence summaries; verbose output goes to `$RUN_DIR/`
-- `$ANTHROPIC_API_KEY` is always read from environment; never written to files
+- Each specialist only calls CLI commands within its own domain
+- Credential handling is centralized in CLAUDE.md; the CLI is the only auth boundary
 - Never provision agents without user approval (Phase 2 gate is mandatory)
 - Never write to `runs/` root — always write under `runs/$RUN_ID/`
 - Never start Phase 4 before Phase 3 completes
-- Never create an environment without a session to use it (on-demand only)
+- Provisioning order respects resource dependencies (files → vaults → skills → agents ∥ environments → sessions)
 - For teams: design all agents before provisioning any
+- Specialists carry full API reference docs (CLI examples only, no curl with auth headers) in their system prompts; lead-0 carries only the routing table
 
 ---
 
@@ -288,10 +427,11 @@ Bash is whitelisted per-prefix. No wildcard `Bash(*)`. Credentials never appear 
 | Failure | Response |
 |---|---|
 | Phase 0: missing API key | Abort, print `export ANTHROPIC_API_KEY=your-key-here` |
-| Phase 3: API 4xx | `provisioner-1` returns error details; lead-0 shows user and asks to fix spec |
-| Phase 3: API 5xx | `provisioner-1` retries once, then reports failure |
-| Phase 4: session error | `env-tester-2` writes `result.md` with error, returns failure summary; lead-0 reports and offers to retry |
-| Phase 4: stream timeout | `env-tester-2` closes stream after 120s, marks test inconclusive |
+| Phase 3: API 4xx | Specialist returns error details; lead-0 shows user and asks to fix spec |
+| Phase 3: API 5xx | Specialist retries once, then reports failure |
+| Phase 4: session error | `events-expert` writes `result.md` with error, returns failure summary; lead-0 reports and offers to retry |
+| Phase 4: stream timeout | `events-expert` closes stream after 120s, marks test inconclusive |
+| Phase 4: requires_action | `events-expert` writes pending confirmations, returns to lead-0 for user decision |
 
 ---
 
@@ -302,3 +442,5 @@ Bash is whitelisted per-prefix. No wildcard `Bash(*)`. Credentials never appear 
 - Agent versioning / update flows (create only, no update)
 - Persistent agent registry across runs (agent IDs are in the run directory only)
 - Multi-turn interactive sessions (smoke test is one-shot only)
+- Define outcomes (research preview)
+- Memory (research preview)
