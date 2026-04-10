@@ -43,9 +43,10 @@ On any failure: print a clear error message with fix instructions, abort.
 
 Interview the user one question at a time. Cover:
 
-1. **Name** — what to call the agent
-2. **Purpose** — one-sentence description
-3. **Single agent or team?** — if team, how many and what roles
+1. **Create or update?** — new agent, or update an existing one? If update, ask for agent ID (or list existing agents via `agents-expert` to help them pick).
+2. **Name** — what to call the agent (or confirm existing name if updating)
+3. **Purpose** — one-sentence description
+4. **Single agent or team?** — if team, how many and what roles
 4. **Model** — Opus / Sonnet / Haiku (Opus for reasoning-heavy, Sonnet for balanced, Haiku for speed)
 5. **Tools** — `agent_toolset_20260401` (full) or specific tools; any custom tools?
 6. **Permission policies** — `always_allow` or `always_ask` for specific tools
@@ -65,7 +66,7 @@ Output: write `$RUN_DIR/design/agent-specs.json`.
 
 ## Phase 2 — Human approval gate
 
-Print the spec as a readable table. Wait for "approved" or change requests. If changes requested, update inline and re-display.
+Print the spec as a readable table. For updates, show a diff of what's changing vs the current version. Wait for "approved" or change requests. If changes requested, update inline and re-display.
 
 ## Phase 3 — Provisioning
 
@@ -81,6 +82,8 @@ Dispatch specialists in dependency order:
 ```
 
 Each specialist reads from `$RUN_DIR/design/agent-specs.json` and writes to `$RUN_DIR/provisioned/{domain}.json`.
+
+For updates: `agents-expert` retrieves the current agent, applies changes with `--version` for concurrency control, and writes the new version to provisioned/agents.json. Environments and sessions are reused or recreated as needed.
 
 ## Phase 4 — Smoke test
 

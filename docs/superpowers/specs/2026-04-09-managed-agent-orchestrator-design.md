@@ -333,9 +333,12 @@ runs/
 
 ## Agent spec file format (`design/agent-specs.json`)
 
+For new agents, `mode` is `"create"` (default). For updates, `mode` is `"update"` with `agent_id` and `current_version`.
+
 ```json
 [
   {
+    "mode": "create",
     "name": "Coding Assistant",
     "model": "claude-sonnet-4-6",
     "system": "You are a helpful coding assistant. Write clean, well-documented code.",
@@ -364,6 +367,19 @@ runs/
   }
 ]
 ```
+
+For updating an existing agent:
+```json
+{
+  "mode": "update",
+  "agent_id": "agt_01abc123",
+  "current_version": 3,
+  "system": "Updated system prompt. Always write tests.",
+  "tools": [{ "type": "agent_toolset_20260401" }]
+}
+```
+
+Only fields being changed need to be included. `agents-expert` passes `current_version` to the API for concurrency control.
 
 With outcome-based validation:
 ```json
@@ -487,6 +503,5 @@ Bash is whitelisted per-prefix. No wildcard `Bash(*)`. Credentials never appear 
 
 - Web UI or non-Claude Code interfaces
 - Auto-submit or auto-send (all actions require explicit user input)
-- Agent versioning / update flows (create only, no update)
 - Persistent agent registry across runs (agent IDs are in the run directory only)
 - Multi-turn interactive sessions (smoke test is one-shot only)
