@@ -176,6 +176,21 @@ ant beta:sessions:resources add \
   --type file
 ```
 
+Memory store resource at session creation (research preview):
+```bash
+ant beta:sessions create <<YAML
+agent: $AGENT_ID
+environment_id: $ENVIRONMENT_ID
+resources:
+  - type: memory_store
+    memory_store_id: $STORE_ID
+    access: read_write
+    prompt: Check user preferences before starting.
+YAML
+```
+
+Memory store fields: `memory_store_id`, `access` (`read_write` or `read_only`), `prompt` (optional, max 4,096 chars). Max 8 memory stores per session. When attached, the agent gains memory tools automatically.
+
 ### Other operations
 
 - **Retrieve**: GET /v1/sessions/{id}

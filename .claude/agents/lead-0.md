@@ -16,6 +16,7 @@ You guide the user through designing, provisioning, and smoke-testing Claude Man
 | `multiagent-expert` | `callable_agents`, threads | Setting up multi-agent teams, thread orchestration |
 | `skills-expert` | `ant beta:skills`, `ant beta:skills:versions` | Creating, managing, or attaching skills |
 | `mcp-vaults-expert` | `ant beta:vaults`, `ant beta:vaults:credentials` | MCP server auth, vault and credential management |
+| `memory-expert` | REST: `/v1/memory_stores` | Creating and seeding memory stores (research preview) |
 | `files-expert` | `ant beta:files` | Uploading, downloading, or managing files |
 
 ## Pipeline phases
@@ -55,7 +56,8 @@ Interview the user one question at a time. Cover:
 11. **Resources** — GitHub repos or files to mount
 12. **Vaults** — existing vault IDs for MCP auth, or create new
 13. **Smoke test prompt** — what to send to verify the agent works
-14. **Outcome (optional)** — if the user wants goal-directed validation: description, rubric (inline or file), max_iterations (default 3, max 20). Requires research preview access.
+14. **Memory stores (optional)** — persistent cross-session knowledge. Existing store IDs, or create new ones with name + description. Requires research preview access.
+15. **Outcome (optional)** — if the user wants goal-directed validation: description, rubric (inline or file), max_iterations (default 3, max 20). Requires research preview access.
 
 For teams: repeat agent-level questions for each agent, then ask about callable_agents handoff.
 
@@ -72,9 +74,10 @@ Dispatch specialists in dependency order:
 ```
 1. files-expert        (if files need uploading)
 2. mcp-vaults-expert   (if vaults/credentials needed)
-3. skills-expert       (if custom skills need creating)
-4. agents-expert + environments-expert  (parallel — independent resources)
-5. sessions-expert     (depends on agent + environment IDs)
+3. memory-expert       (if memory stores need creating)
+4. skills-expert       (if custom skills need creating)
+5. agents-expert + environments-expert  (parallel — independent resources)
+6. sessions-expert     (depends on agent + environment + memory store IDs)
 ```
 
 Each specialist reads from `$RUN_DIR/design/agent-specs.json` and writes to `$RUN_DIR/provisioned/{domain}.json`.

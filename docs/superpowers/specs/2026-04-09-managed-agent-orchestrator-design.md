@@ -22,7 +22,8 @@ A Claude Code agent pipeline that guides a developer through designing, provisio
 | 6 | `multiagent-expert` | Sonnet | callable_agents, session threads, coordinator pattern, thread events | [multi-agent](https://platform.claude.com/docs/en/managed-agents/multi-agent) |
 | 7 | `skills-expert` | Sonnet | Skill CRUD, versioning, Anthropic vs custom skills | [skills](https://platform.claude.com/docs/en/managed-agents/skills) |
 | 8 | `mcp-vaults-expert` | Sonnet | MCP server declaration, vault CRUD, credential management, OAuth flows | [mcp-connector](https://platform.claude.com/docs/en/managed-agents/mcp-connector), [vaults](https://platform.claude.com/docs/en/managed-agents/vaults) |
-| 9 | `files-expert` | Sonnet | File upload, download, metadata, lifecycle | CLI: `ant beta:files` |
+| 9 | `files-expert` | Sonnet | File upload, download, metadata, lifecycle | CLI: `ant beta:files`, [files](https://platform.claude.com/docs/en/managed-agents/files) |
+| 10 | `memory-expert` | Sonnet | Memory stores, memories CRUD, versioning, redaction | [memory](https://platform.claude.com/docs/en/managed-agents/memory) |
 
 `lead-0` is the only agent that spawns subagents. No nested spawning. Subagents return 1–2 sentence summaries; all verbose output goes to `$RUN_DIR/`.
 
@@ -39,6 +40,7 @@ A Claude Code agent pipeline that guides a developer through designing, provisio
 | `skills-expert` | `ant beta:skills {create,retrieve,list,delete}`, `ant beta:skills:versions {create,retrieve,list,delete}` |
 | `mcp-vaults-expert` | `ant beta:vaults {create,retrieve,update,list,delete,archive}`, `ant beta:vaults:credentials {create,retrieve,update,list,delete,archive}` |
 | `files-expert` | `ant beta:files {upload,download,retrieve-metadata,list,delete}` |
+| `memory-expert` | REST: `/v1/memory_stores`, `/v1/memory_stores/*/memories`, `/v1/memory_stores/*/memory_versions` (CLI not yet available) |
 
 ### System prompt structure
 
@@ -163,10 +165,11 @@ If the user requests changes, `lead-0` updates the spec inline and re-displays. 
 ```
 1. files-expert        (if files need uploading)
 2. mcp-vaults-expert   (if vaults/credentials needed)
-3. skills-expert       (if custom skills need creating)
-4. agents-expert       (create agent definitions — depends on skills being created first)
-5. environments-expert (create environments — independent of agents)
-6. sessions-expert     (create session — depends on agent + environment)
+3. memory-expert       (if memory stores need creating)
+4. skills-expert       (if custom skills need creating)
+5. agents-expert       (create agent definitions — depends on skills being created first)
+6. environments-expert (create environments — independent of agents)
+7. sessions-expert     (create session — depends on agent + environment + memory stores)
 ```
 
 Steps 4 and 5 can run in parallel (agents and environments are independent resources).
@@ -317,6 +320,7 @@ runs/
       vaults.json             ← {vault_id, display_name} (if created)
       skills.json             ← {skill_id, name, version} (if created)
       files.json              ← {file_id, filename} (if uploaded)
+      memory-stores.json     ← {store_id, name} (if created)
     test/
       events.json             ← raw SSE event stream (append-only)
       pending-confirmations.json ← tool confirmation requests (if any)
@@ -353,6 +357,7 @@ runs/
       }
     },
     "resources": [],
+    "memory_stores": [],
     "vault_ids": [],
     "smoke_test_prompt": "Write a Python function that returns the nth Fibonacci number.",
     "outcome": null
@@ -402,7 +407,8 @@ No credentials, no API keys, no OAuth tokens in this file.
     multiagent-expert.md       ← multi-agent docs
     skills-expert.md           ← skills docs
     mcp-vaults-expert.md       ← mcp-connector + vaults docs
-    files-expert.md            ← files CLI reference
+    files-expert.md            ← files CLI reference + docs
+    memory-expert.md           ← memory stores REST API docs
   settings.json                ← tool permissions
 runs/                          ← all run output (gitignored)
   latest -> ...                ← symlink to most recent run
@@ -484,4 +490,3 @@ Bash is whitelisted per-prefix. No wildcard `Bash(*)`. Credentials never appear 
 - Agent versioning / update flows (create only, no update)
 - Persistent agent registry across runs (agent IDs are in the run directory only)
 - Multi-turn interactive sessions (smoke test is one-shot only)
-- Memory (research preview)
