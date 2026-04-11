@@ -132,7 +132,10 @@ The skill produces this in `agent-specs.json`:
     }
   },
   "vault_ids": ["[created by mcp-vaults-expert]"],
-  "smoke_test_prompt": "Simulate receiving a [EVENT_TYPE] event and walk through what you would do. Do not make real API calls."
+
+  "_orchestration (not sent to API)": {
+    "smoke_test_prompt": "Simulate receiving a [EVENT_TYPE] event and walk through what you would do. Do not make real API calls."
+  }
 }
 ```
 
