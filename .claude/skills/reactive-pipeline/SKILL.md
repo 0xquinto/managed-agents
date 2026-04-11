@@ -54,6 +54,7 @@ digraph questions {
 | # | Question | Why | Example answers |
 |---|---|---|---|
 | 1 | Name for this agent? | Agent identity | "sentry-fixer", "pr-reviewer", "ticket-responder" |
+| 1b | Create or update existing? | Agent mode | "create new", "update agt_01abc123" |
 | 2 | What event triggers this? | Determines MCP + filter config | "Sentry issue created", "PR opened", "ticket created" |
 | 3 | MCP server URL for event source? | Wires mcp-vaults-expert | `https://mcp.sentry.io/`, `https://api.githubcopilot.com/mcp/` |
 | 4 | Auth for event source? (OAuth, API key, or none) | Credential type for vault | "OAuth with refresh", "static API key", "none" |
@@ -125,7 +126,7 @@ The skill produces this in `agent-specs.json`:
       "packages": {},
       "networking": {
         "type": "limited",
-        "allowed_hosts": ["[source_host]", "[delivery_host]"],
+        "allowed_hosts": ["https://[source_host]", "https://[delivery_host]"],
         "allow_mcp_servers": true,
         "allow_package_managers": true
       }
