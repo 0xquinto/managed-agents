@@ -59,13 +59,13 @@ For each question:
    - `subject`: `"Design: <topic>"` (e.g., `"Design: Model selection"`)
    - `description`: The question you are about to ask
    - `activeForm`: `"Discussing <topic>"` (e.g., `"Discussing model selection"`)
-3. Set the task to `in_progress` and ask the question in conversation.
+3. Call `TaskUpdate` to set the task to `in_progress`, then ask the question in conversation.
 4. Wait for the user's answer. The user may explore, chat, or dispatch agents — the task stays `in_progress`.
-5. Mark the task `completed`.
+5. Call `TaskUpdate` to mark the task `completed`.
 6. Say "ready when you are" or similar. Do NOT create the next task.
 7. When the user signals to continue, go to step 1.
 
-**Invariant:** At most one design task may exist at a time.
+**Invariant:** At most one design task may be `pending` or `in_progress` at a time.
 
 ### Topic guide
 
