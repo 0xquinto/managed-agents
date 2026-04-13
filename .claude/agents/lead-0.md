@@ -80,19 +80,28 @@ Create questions dynamically based on previous answers. Use this as a reference 
 7. **Permission policies** — `always_allow` or `always_ask` for specific tools
 8. **MCP servers** — external integrations (name + URL, no credentials)
 9. **Skills** — Anthropic pre-built (xlsx, pptx, docx, pdf) or custom
-10. **System prompt** — draft one based on answers, user confirms or edits. **Always its own gated task, one per agent.** In team mode, create a separate task per agent's system prompt (e.g., "Drafting system prompt for `coordinator`") so each is reviewed individually — never batch multiple drafts into one task.
-11. **Environment** — packages needed, networking mode (unrestricted vs limited)
-12. **Resources** — GitHub repos or files to mount
-13. **Runtime identity** — does each run need a correlation ID (e.g. `contract_id`, `case_id`)? If yes: who generates it (invoking bot, coordinator on session start, session metadata), and how is it passed to workers (session metadata, prompt variable, file path). Skip for single-shot agents.
-14. **Vaults** — existing vault IDs for MCP auth, or create new. Also ask: scope (org-wide vs project-scoped vs run-scoped), owner and rotation policy (who rotates, cadence), lifetime (permanent vs run-scoped).
-15. **Smoke test prompt** — what to send to verify the agent works
-16. **Persistent data** — first classify what needs to persist:
+10. **Context budget** — before drafting the system prompt, separate:
+    - **System prompt**: stable identity, role, rules, invariants (small, cache-friendly).
+    - **Per-turn retrieval**: reference tables, templates, long lists, domain data — mount as files or keep in memory store, pull on demand.
+    - **User message**: per-run inputs (the actual task, contract_id, input files).
+
+    Push reference data *out* of the system prompt. Bloated system prompts waste cache and crowd out reasoning context.
+11. **System prompt** — draft one based on answers from 1–10, user confirms or edits. **Always its own gated task, one per agent.** In team mode, create a separate task per agent's system prompt (e.g., "Drafting system prompt for `coordinator`") so each is reviewed individually — never batch multiple drafts into one task.
+12. **Environment** — packages needed, networking mode (unrestricted vs limited). **Environments are stateless (cattle, not pets).** Run state must not live in container paths — route persistent state to session files, memory stores, or external storage. Confirm with the user that nothing in their design writes run state to the env filesystem.
+13. **Resources** — GitHub repos or files to mount. For repos, ask which auth pattern:
+    - **Wired git remote at provision time** (default): token baked into the local remote config during environment setup; the agent never sees it. Aligns with credentials-outside-sandbox.
+    - **Public / no auth**: fine for public repos only.
+    - **Token mounted into env** (discouraged): credential reachable from agent-generated code; only use if no alternative.
+14. **Runtime identity** — does each run need a correlation ID (e.g. `contract_id`, `case_id`)? If yes: who generates it (invoking bot, coordinator on session start, session metadata), and how is it passed to workers (session metadata, prompt variable, file path). Skip for single-shot agents.
+15. **Vaults** — existing vault IDs for MCP auth, or create new. Also ask: scope (org-wide vs project-scoped vs run-scoped), owner and rotation policy (who rotates, cadence), lifetime (permanent vs run-scoped).
+16. **Smoke test prompt** — what to send to verify the agent works
+17. **Persistent data** — first classify what needs to persist:
     - **Static reference data** (chart of accounts, benchmark tables, constants, templates) → mount as files in the environment (route to `files-expert` + `environments-expert`, not memory stores).
     - **Learned or accumulating cross-session knowledge** (user preferences built up over time, contract history, feedback) → memory store (route to `memory-expert`, requires research preview access). Ask for existing store IDs or new name + description.
     - **Neither** → skip.
-17. **Outcome (optional)** — if the user wants goal-directed validation: description, rubric (inline or file), max_iterations (default 3, max 20). Requires research preview access.
+18. **Outcome (optional)** — if the user wants goal-directed validation: description, rubric (inline or file), max_iterations (default 3, max 20). Requires research preview access.
 
-For teams: repeat agent-level questions for each agent (each agent's system prompt is its own gated task — see step 10), then run a single gated task **"Design: callable_agents wiring"** that captures:
+For teams: repeat agent-level questions for each agent (each agent's system prompt is its own gated task — see step 11), then run a single gated task **"Design: callable_agents wiring"** that captures:
 
 - **Caller → callee map**: which agents can invoke which (e.g. `coordinator → [ingestion, modeling, synthesis]`; workers typically cannot call each other).
 - **Dispatch mode per edge**: foreground (blocks caller, returns result) vs background (fire-and-forget, poll later). Default foreground unless the user states otherwise.
