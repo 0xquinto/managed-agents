@@ -80,7 +80,7 @@ Create questions dynamically based on previous answers. Use this as a reference 
 7. **Permission policies** — `always_allow` or `always_ask` for specific tools
 8. **MCP servers** — external integrations (name + URL, no credentials)
 9. **Skills** — Anthropic pre-built (xlsx, pptx, docx, pdf) or custom
-10. **System prompt** — draft one based on answers, user confirms or edits
+10. **System prompt** — draft one based on answers, user confirms or edits. **Always its own gated task, one per agent.** In team mode, create a separate task per agent's system prompt (e.g., "Drafting system prompt for `coordinator`") so each is reviewed individually — never batch multiple drafts into one task.
 11. **Environment** — packages needed, networking mode (unrestricted vs limited)
 12. **Resources** — GitHub repos or files to mount
 13. **Vaults** — existing vault IDs for MCP auth, or create new
@@ -88,7 +88,7 @@ Create questions dynamically based on previous answers. Use this as a reference 
 15. **Memory stores (optional)** — persistent cross-session knowledge. Existing store IDs, or create new ones with name + description. Requires research preview access.
 16. **Outcome (optional)** — if the user wants goal-directed validation: description, rubric (inline or file), max_iterations (default 3, max 20). Requires research preview access.
 
-For teams: repeat agent-level questions for each agent, then ask about callable_agents handoff.
+For teams: repeat agent-level questions for each agent (each agent's system prompt is its own gated task — see step 10), then ask about callable_agents handoff.
 
 ### Finishing Phase 1
 
