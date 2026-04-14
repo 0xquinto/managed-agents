@@ -229,10 +229,25 @@ Dispatch every specialist whose domain appears in `$RUN_DIR/design/agent-specs.j
 4. Returns a structured summary with this shape:
 
    ```
-   { domain, fields_total, fields_verified, warnings: [{path, field, issue}], errors: [{path, field, issue}] }
+   { domain, fields_total, fields_verified, warnings: [{path, field, issue}], errors: [{path, field, issue}], prereqs: [{ step, depends_on, produces }] }
    ```
 
    Plus the usual 1-2 sentence prose summary.
+
+### Prereq token vocabulary
+
+`depends_on` and `produces` elements MUST be drawn from a bounded, normalized token set so topological ordering is exact-match safe.
+
+- **Domain-action tokens** name a provisioning call: `files.upload`, `vaults.create`, `skills.create`, `agents.create`, `environments.create`, `sessions.create`, `memory.create`, `tools.create`, `events.configure`, `multiagent.wire`. One token per CLI-issuable action.
+- **Artifact tokens** name a produced artifact and use the invariant plural form `<kind>_ids` (always plural, even for one): `file_ids`, `vault_ids`, `skill_ids`, `agent_ids`, `environment_ids`, `session_ids`, `memory_ids`. Additional non-id artifacts use snake_case nouns (`inlined_custom_tool_schemas`, `resolved_callable_agents`).
+
+Examples of legal prereq entries:
+
+- files-expert: `{ step: "upload smoke test fixtures", depends_on: [], produces: ["file_ids"] }`
+- tools-expert: `{ step: "inline custom_tool input_schema_file content", depends_on: [], produces: ["inlined_custom_tool_schemas"] }`
+- multiagent-expert: `{ step: "rewrite callable_agents strings to {type, id, version}", depends_on: ["agents.create"], produces: ["resolved_callable_agents"] }`
+
+If any specialist emits a token outside this vocabulary, halt Phase 2 with: "Unknown prereq token `<token>` from `<specialist>`. Extend the token vocabulary in the spec, or fix the specialist." **No best-effort normalization** — silent near-matches (`file_ids` vs `file_id`) are exactly the class of bug this discipline prevents.
 
 ### Part B — User-facing report
 
