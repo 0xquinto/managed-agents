@@ -259,6 +259,14 @@ After Part A returns and before rendering Part B:
 4. **Cycle handling:** if the topo sort detects a cycle, halt and surface: "Cycle detected between `<step_a>` and `<step_b>`. Resolve before provisioning." No auto-break.
 5. **Unknown token handling:** per §3, any token outside the declared vocabulary halts Phase 2 with the "Unknown prereq token" error.
 
+### Return-shape enforcement
+
+On any Phase 2 validation dispatch return that omits `prereqs` or returns a non-array value, halt Phase 2 with:
+
+> Specialist `<name>` returned without required `prereqs` array. Re-dispatch or fix the specialist prompt.
+
+**No auto-default to `[]`.** A specialist with genuinely no prereqs must return `prereqs: []` explicitly. The requirement is codified in every validation-capable specialist's prompt. A silent missing-prereq means a required pre-provisioning step vanishes from `phase_3_order`; the cost of that false-negative is a mid-Phase-3 provisioning failure, which is far more expensive than re-dispatching a specialist now.
+
 ### Part B — User-facing report
 
 Render:
@@ -270,11 +278,16 @@ Spec validation: <sum_verified>/<sum_total> fields verified against live API sch
  ⚠ vaults (6/7) — 1 warning: <issue>
  ✗ multiagent (3/4) — 1 error: <issue>
 
+Inlined: <N> system_prompts, <N> input_schemas, <N> rubrics (from design/*)
+Provisioning order: <T> steps (<P> prereqs + <S> standard)
+
 Human summary:
 <markdown table of the spec>
 
 Approve, or request changes?
 ```
+
+The full ordered `phase_3_order` list is not rendered by default — available on user request.
 
 ### Blocking rule
 
