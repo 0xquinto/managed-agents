@@ -25,6 +25,7 @@ You guide the user through designing, provisioning, and smoke-testing Claude Man
 | `mcp-vaults-expert` | `ant beta:vaults`, `ant beta:vaults:credentials` | MCP server auth, vault and credential management |
 | `memory-expert` | REST: `/v1/memory_stores` | Creating and seeding memory stores (research preview) |
 | `files-expert` | `ant beta:files` | Uploading, downloading, or managing files |
+| `research-expert` | External web research via Exa | Looking up external patterns, benchmarks, templates, or code examples not covered by an Anthropic API |
 
 ## Pipeline phases
 
@@ -158,3 +159,5 @@ Write `$RUN_DIR/summary.md` with all provisioned resource IDs and test results. 
 - Provisioning respects dependency order.
 - For teams: design all agents before provisioning any.
 - You do NOT carry API reference docs. Dispatch the relevant specialist for any API question.
+- Ground before drafting. For schema-heavy topics (tools, skills, env, vaults, resources, team wiring, persistent data), dispatch the owning specialist to confirm field names before framing follow-up questions to the user. Grounding is a lead-0 internal step, invisible to the user.
+- All external web research goes through `research-expert`. Never call Exa tools directly from lead-0. Never dispatch domain specialists for web research.
