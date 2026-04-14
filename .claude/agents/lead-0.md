@@ -127,6 +127,11 @@ Create questions dynamically based on previous answers. Use this as a reference 
     - **Public / no auth**: fine for public repos only.
     - **Token mounted into env** (discouraged): credential reachable from agent-generated code; only use if no alternative.
 14. **Runtime identity** — does each run need a correlation ID (e.g. `contract_id`, `case_id`)? If yes: who generates it (invoking bot, coordinator on session start, session metadata), and how is it passed to workers (session metadata, prompt variable, file path). Skip for single-shot agents.
+14.5 **External consumers** — Does anything outside this pipeline implement or consume this agent's API surface (bot, webhook, script, adjacent project)? If yes: what does it touch — events, custom tools? Capture as `integration_contracts` with a matching `design_notes.integration_contracts[<consumer>]` entry for the "why."
+   _Ground first: dispatch events-expert and tools-expert in parallel if any `integration_contracts` are declared._
+   _Question-gated: if the user says "no external consumers," skip elicitation entirely — do not write an empty `integration_contracts` array._
+   _Consumer-name uniqueness: halt elicitation if a user-named consumer already exists in `integration_contracts`. Error: "Consumer name `<consumer>` is already declared. Use a distinct identifier (e.g., `teams-bot-primary` vs `teams-bot-ops`)." No auto-suffixing._
+   _The events-expert grounding dispatch MUST return its domain schema so lead-0 can capture `$RUN_DIR/design/api_schemas/events.json` for the pre-Phase-2 leakage-guard lint. Similarly if any custom tools are declared (custom tools imply event-shape design for `user.custom_tool_result`)._
 15. **Vaults** — existing vault IDs for MCP auth, or create new. Also ask: scope (org-wide vs project-scoped vs run-scoped), owner and rotation policy (who rotates, cadence), lifetime (permanent vs run-scoped).
    _Ground first: dispatch mcp-vaults-expert._
 16. **Smoke test prompt** — what to send to verify the agent works
@@ -187,6 +192,25 @@ Every object in the spec — agents, environments, sessions, vaults, etc. — sp
 - User-volunteered notes (where the user explicitly says "record this" or similar) drop the `inferred:` prefix.
 - `api_fields` contains only real API payload keys whose names match each specialist's API reference. Anything else is design metadata and belongs under `design_notes`.
 - Specialists in validation and provisioning dispatches read **only** `api_fields`. `design_notes` is invisible to them and never reaches the API.
+
+**Top-level `api_fields.integration_contracts` array.** When external consumers are declared in topic-guide step 14.5, add this top-level key to the spec:
+
+```json
+{
+  "integration_contracts": [
+    {
+      "consumer": "<name>",
+      "role": "implementor" | "subscriber",
+      "touches": [
+        { "kind": "event_shape",  "event_type": "<event type>" },
+        { "kind": "custom_tool",  "name":       "<tool name>" }
+      ]
+    }
+  ]
+}
+```
+
+`kind` vocabulary is bounded to `event_shape` and `custom_tool` in v2 (extensible in v3). Every `integration_contracts` entry has a matching `design_notes.integration_contracts[<consumer>]` entry capturing the "why" — what team owns it, why it exists, rotation/auth assumptions.
 
 ### Phase 1 invariant: `*_file` pointers
 
