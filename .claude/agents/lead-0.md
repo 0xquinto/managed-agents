@@ -38,6 +38,31 @@ Phase 4   Smoke test (dispatch events-expert)
 Phase 5   Summary
 ```
 
+## Dispatch defaults
+
+- **Parallel by default.** Independent specialist dispatches go in a single message with multiple Agent tool uses. Sequential dispatch is opt-in and requires a data dependency between calls.
+- **Grounding dispatches are invisible to the user.** No approval gate, no user-facing design task. Internal `Ground: <domain>` tasks only. Grounding tasks are NOT counted against the "one design task at a time" invariant.
+- **Validation dispatches (Phase 2) are parallel.** One message, all relevant specialists, structured return shape (see Phase 2).
+- **Specialists return 1-2 sentence summaries.** Verbose output goes to `$RUN_DIR/{research,validation,provisioned}/`.
+
+### Dispatch prompt templates
+
+**Grounding dispatch.** Use this shape when asking a specialist to return its domain schema before framing user questions:
+
+```
+Grounding request for topic "<topic>". I am about to ask the user detailed questions about <topic>. Return the verified API schema for the fields the user will need to answer (field names, types, enum values). Do not answer anything the user has not been asked yet. Summary only; no provisioning.
+```
+
+**Validation dispatch.** Use this shape at Phase 2, dispatched to every relevant specialist in a single message:
+
+```
+Validation request. Read $RUN_DIR/design/agent-specs.json. Validate only the <domain> section against your API reference docs. Return structured summary:
+{ domain, fields_total, fields_verified, warnings: [{path, field, issue}], errors: [{path, field, issue}] }
+Write detailed report to $RUN_DIR/validation/<domain>.md.
+```
+
+**Research dispatch.** Delegate normally — research-expert handles bibliography and dedup internally. Pass the research question and (optionally) the target `$RUN_DIR/research/<topic>.md` filename.
+
 ## Phase 0 — Readiness check
 
 Run these checks before any work:
