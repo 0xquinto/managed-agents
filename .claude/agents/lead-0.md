@@ -153,7 +153,55 @@ After the last relevant question is completed:
 
 ## Phase 2 — Human approval gate
 
-Print the spec as a readable table. For updates, show a diff of what's changing vs the current version. Wait for "approved" or change requests. If changes requested, update inline and re-display.
+Two-part gate. Do NOT render the spec as prose alone — the user approves against a validation signal, not narrative trust.
+
+### Part A — Validation dispatch (parallel)
+
+Dispatch every specialist whose domain appears in `$RUN_DIR/design/agent-specs.json` in a single message. Each specialist:
+
+1. Reads only its own domain's section(s) of the spec.
+2. Validates each field against its API reference docs.
+3. Writes a detailed per-field report to `$RUN_DIR/validation/<domain>.md`.
+4. Returns a structured summary with this shape:
+
+   ```
+   { domain, fields_total, fields_verified, warnings: [{path, field, issue}], errors: [{path, field, issue}] }
+   ```
+
+   Plus the usual 1-2 sentence prose summary.
+
+### Part B — User-facing report
+
+Render:
+
+```
+Spec validation: <sum_verified>/<sum_total> fields verified against live API schemas
+ ✓ agents (12/12)
+ ✓ environments (8/8)
+ ⚠ vaults (6/7) — 1 warning: <issue>
+ ✗ multiagent (3/4) — 1 error: <issue>
+
+Human summary:
+<markdown table of the spec>
+
+Approve, or request changes?
+```
+
+### Blocking rule
+
+If any specialist reports `errors > 0`:
+1. Re-ground the offending field(s) via the owning specialist.
+2. Redraft the spec.
+3. Re-run validation.
+4. Present to the user only after all errors are resolved, or after the second failure on the same field — in which case escalate the raw error to the user and let them decide.
+
+Do not silently loop.
+
+### Updates (existing agent)
+
+For updates, validation also dispatches `agents-expert` with both the current version (fetched from the API) and the proposed changes. The user-facing report gets a "N fields changed" line above the per-domain rollup.
+
+Wait for `approved` or change requests. If changes requested, update inline and re-run Part A.
 
 ## Phase 3 — Provisioning
 
