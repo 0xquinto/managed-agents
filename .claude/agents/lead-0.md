@@ -119,8 +119,10 @@ Create questions dynamically based on previous answers. Use this as a reference 
 11. **System prompt** — draft one based on answers from 1–10, user confirms or edits. **Always its own gated task, one per agent.** In team mode, create a separate task per agent's system prompt (e.g., "Drafting system prompt for `coordinator`") so each is reviewed individually — never batch multiple drafts into one task.
 12. **Environment** — packages needed, networking mode (unrestricted vs limited). **Environments are stateless (cattle, not pets).** Run state must not live in container paths — route persistent state to session files, memory stores, or external storage. Confirm with the user that nothing in their design writes run state to the env filesystem.
    _Ground first: dispatch environments-expert._
+   _Watch: if the user mentions fixtures, scripts, or data at `/mnt/session/...`, clarify the delivery mechanism explicitly. `/mnt/session/` is session-resource-scoped, not env-scoped._
 13. **Resources** — GitHub repos or files to mount. For repos, ask which auth pattern:
    _Ground first: dispatch files-expert and environments-expert in parallel._
+   _Watch: if the user mentions fixtures, scripts, or data at `/mnt/session/...`, clarify the delivery mechanism explicitly. `/mnt/session/` is session-resource-scoped, not env-scoped._
     - **Wired git remote at provision time** (default): token baked into the local remote config during environment setup; the agent never sees it. Aligns with credentials-outside-sandbox.
     - **Public / no auth**: fine for public repos only.
     - **Token mounted into env** (discouraged): credential reachable from agent-generated code; only use if no alternative.
@@ -130,6 +132,7 @@ Create questions dynamically based on previous answers. Use this as a reference 
 16. **Smoke test prompt** — what to send to verify the agent works
 17. **Persistent data** — first classify what needs to persist:
    _Ground first: dispatch files-expert for file mounts or memory-expert for memory stores, depending on the classification._
+   _If the persistent-data classification selects memory-store delivery, the memory-expert grounding dispatch MUST return its domain schema (field names + types) so lead-0 can capture `$RUN_DIR/design/api_schemas/memory.json` for the pre-Phase-2 leakage-guard lint._
     - **Static reference data** (chart of accounts, benchmark tables, constants, templates) → mount as files in the environment (route to `files-expert` + `environments-expert`, not memory stores).
     - **Learned or accumulating cross-session knowledge** (user preferences built up over time, contract history, feedback) → memory store (route to `memory-expert`, requires research preview access). Ask for existing store IDs or new name + description.
     - **Neither** → skip.
@@ -138,6 +141,7 @@ Create questions dynamically based on previous answers. Use this as a reference 
 For teams: repeat agent-level questions for each agent (each agent's system prompt is its own gated task — see step 11), then run a single gated task **"Design: callable_agents wiring"** that captures:
 
 _Ground first: dispatch multiagent-expert to confirm callable_agents shape and dispatch-mode enum values before opening the wiring task._
+_If the team includes an evaluator agent: explicitly ask where its rubric structure (weights, dimensions, thresholds) lives. Rubrics have NO dedicated API field — they must be embedded in system prompt text, referenced via a skill, or loaded from a file at runtime (`rubric_file` per §"Phase 1 invariant"). The design question is "where," not "whether."_
 
 - **Caller → callee map**: which agents can invoke which (e.g. `coordinator → [ingestion, modeling, synthesis]`; workers typically cannot call each other).
 - **Dispatch mode per edge**: foreground (blocks caller, returns result) vs background (fire-and-forget, poll later). Default foreground unless the user states otherwise.
