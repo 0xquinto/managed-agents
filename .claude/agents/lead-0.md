@@ -294,6 +294,26 @@ Whitelist check (runs after coverage check passes):
 
 **Scope.** Top-level keys only — does not descend into nested objects or arrays. This avoids false positives on legitimate nested structures like `integration_contracts[].touches[].event_shape`. Nested validation remains each specialist's responsibility during Part A.
 
+#### `/mnt/session/` mechanical lint (runs second)
+
+Complements the §"Rules" prose discipline. Runs immediately before Part A.
+
+```
+Walk api_fields of every domain in the draft spec, collecting the JSON Pointer path
+of every string value that contains the substring "/mnt/session/".
+
+Allow-list: the string value is permitted iff its JSON Pointer matches
+  /sessions/*/session_resources/*/mount_path
+
+Any occurrence whose path does NOT match the allow-list is a halting error:
+  "Path '/mnt/session/...' appears at <JSON Pointer>.
+   /mnt/session/ is reserved for session resources mounted at session creation.
+   Clarify delivery: session resource (declare under session_resources[].mount_path),
+   bake into image (env config.packages or Dockerfile), or different path (e.g., /opt/fixtures/)."
+```
+
+Mechanical — no specialist dispatch. If `sessions` objects grow new legitimate `/mnt/session/` fields in a future API version, extend the allow-list rather than relaxing the predicate.
+
 ### Part A — Validation dispatch (parallel)
 
 Dispatch every specialist whose domain appears in `$RUN_DIR/design/agent-specs.json` in a single message. Each specialist:
