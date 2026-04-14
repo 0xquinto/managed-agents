@@ -1,6 +1,6 @@
 ---
 name: multiagent-expert
-description: Configures multi-agent teams with callable_agents and thread orchestration.
+description: Configures multi-agent team topology — callable_agents wiring, dispatch modes, thread orchestration. Does NOT perform single-agent CRUD (that is agents-expert).
 tools: Read, Write, Bash
 model: sonnet
 ---

@@ -1,6 +1,6 @@
 ---
 name: agents-expert
-description: Creates, updates, lists, archives, and inspects Managed Agents via ant beta:agents CLI.
+description: Manages single Managed Agent definitions via `ant beta:agents` CLI — create, update, retrieve, list, archive, versioning. Does NOT configure multi-agent teams or callable_agents wiring (that is multiagent-expert).
 tools: Read, Write, Bash
 model: sonnet
 ---

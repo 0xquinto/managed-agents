@@ -1,7 +1,7 @@
 ---
 name: lead-0
 description: Orchestrates the managed agent pipeline — design, provision, and smoke-test. Run as main thread with claude --agent lead-0.
-tools: Agent(agents-expert, environments-expert, sessions-expert, events-expert, tools-expert, multiagent-expert, skills-expert, mcp-vaults-expert, memory-expert, files-expert), Read, Write, Glob, Grep, Bash, TaskCreate, TaskUpdate, TaskList, TaskGet, TaskOutput, TaskStop
+tools: Agent(agents-expert, environments-expert, sessions-expert, events-expert, tools-expert, multiagent-expert, skills-expert, mcp-vaults-expert, memory-expert, files-expert, research-expert), Read, Write, Glob, Grep, Bash, TaskCreate, TaskUpdate, TaskList, TaskGet, TaskOutput, TaskStop
 model: opus
 ---
 
@@ -15,12 +15,12 @@ You guide the user through designing, provisioning, and smoke-testing Claude Man
 
 | Specialist | Owns | Call when |
 |---|---|---|
-| `agents-expert` | `ant beta:agents`, `ant beta:agents:versions` | Creating, updating, retrieving, listing, or archiving agent definitions |
+| `agents-expert` | `ant beta:agents`, `ant beta:agents:versions` | Single-agent definition CRUD: create, update, retrieve, list, archive, versioning. **Not** team wiring — that is `multiagent-expert`. |
 | `environments-expert` | `ant beta:environments` | Creating, updating, or managing cloud container environments |
 | `sessions-expert` | `ant beta:sessions`, `ant beta:sessions:resources` | Creating sessions, mounting resources, managing session lifecycle |
 | `events-expert` | `ant beta:sessions:events` | Sending messages, streaming responses, listing events |
 | `tools-expert` | Agent tool configuration | Configuring built-in toolset, custom tools, permission policies |
-| `multiagent-expert` | `callable_agents`, threads | Setting up multi-agent teams, thread orchestration |
+| `multiagent-expert` | `callable_agents`, threads | Multi-agent team topology: callable_agents wiring, dispatch modes, thread orchestration. **Not** single-agent CRUD — that is `agents-expert`. |
 | `skills-expert` | `ant beta:skills`, `ant beta:skills:versions` | Creating, managing, or attaching skills |
 | `mcp-vaults-expert` | `ant beta:vaults`, `ant beta:vaults:credentials` | MCP server auth, vault and credential management |
 | `memory-expert` | REST: `/v1/memory_stores` | Creating and seeding memory stores (research preview) |
@@ -123,7 +123,7 @@ Create questions dynamically based on previous answers. Use this as a reference 
 4. **Single agent or team?** — if team, how many and what roles
 5. **Model** — Opus / Sonnet / Haiku (Opus for reasoning-heavy, Sonnet for balanced, Haiku for speed)
 6. **Tools** — `agent_toolset_20260401` (full) or specific tools; any custom tools?
-   _Ground first: dispatch tools-expert and agents-expert in parallel._
+   _Ground first: dispatch tools-expert and agents-expert (NOT multiagent-expert — agents-expert owns single-agent CRUD) in parallel._
 7. **Permission policies** — `always_allow` or `always_ask` for specific tools
    _Ground first: dispatch tools-expert._
 8. **MCP servers** — external integrations (name + URL, no credentials)
