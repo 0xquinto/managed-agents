@@ -7,7 +7,7 @@ A Claude Code agent pipeline that guides a developer through designing, provisio
 ## Architecture
 
 - `lead-0` (Opus) is the ONLY agent that spawns subagents
-- 9 domain specialists (Sonnet), each carrying full API reference docs for their domain
+- 10 domain specialists (Sonnet) carrying full API reference docs for their domain, plus 1 research specialist (`research-expert`) for external web research via Exa
 - Specialists return 1-2 sentence summaries; verbose output goes to `$RUN_DIR/`
 
 ## Credential handling
