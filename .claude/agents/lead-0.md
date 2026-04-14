@@ -50,7 +50,7 @@ Phase 5   Summary
 **Grounding dispatch.** Use this shape when asking a specialist to return its domain schema before framing user questions:
 
 ```
-Grounding request for topic "<topic>". I am about to ask the user detailed questions about <topic>. Return the verified API schema for the fields the user will need to answer (field names, types, enum values). Do not answer anything the user has not been asked yet. Summary only; no provisioning.
+Grounding request for topic "<topic>". I am about to ask the user detailed questions about <topic>. Return the verified API schema for the fields the user will need to answer as a JSON list of { name, type } pairs (optionally including enum values). Do not answer anything the user has not been asked yet. Summary only; no provisioning.
 ```
 
 **Validation dispatch.** Use this shape at Phase 2, dispatched to every relevant specialist in a single message:
@@ -62,6 +62,26 @@ Write detailed report to $RUN_DIR/validation/<domain>.md.
 ```
 
 **Research dispatch.** Delegate normally — research-expert handles bibliography and dedup internally. Pass the research question and (optionally) the target `$RUN_DIR/research/<topic>.md` filename.
+
+### Api-schemas capture during grounding
+
+Every grounding dispatch response is normalized and persisted. Immediately after each grounding task completes, write `$RUN_DIR/design/api_schemas/<domain>.json` with this shape:
+
+```json
+{
+  "domain": "<domain>",
+  "fields": [
+    { "name": "<field>", "type": "<type>" }
+  ],
+  "source": "<short description of which grounding dispatch produced this>"
+}
+```
+
+One file per domain. If a domain is grounded multiple times in a run (e.g., initial grounding plus a re-ground after a §5/§7 halt), overwrite the file in place — the most recent grounding response is canonical.
+
+This artifact is the whitelist source for the pre-Phase-2 leakage-guard lint (§"Leakage-guard lint").
+
+**Grounding matrix requirement.** For the leakage-guard whitelist to cover every domain that appears in `api_fields`, every domain present in the draft spec must have been grounded at least once. The Phase 1 topic guide covers 10 domains via its existing grounding annotations (tools, agents, environments, skills, mcp-vaults, files, memory, multiagent, events, sessions); domains reached through topic-guide step 14.5 add `events` + `tools` groundings when external consumers are declared, and step 17 adds `memory` grounding when memory-store delivery is selected.
 
 ## Phase 0 — Readiness check
 
@@ -246,6 +266,33 @@ Inlined: <N> system_prompts, <N> input_schemas, <N> rubrics (from design/*)
 ## Phase 2 — Human approval gate
 
 Two-part gate. Do NOT render the spec as prose alone — the user approves against a validation signal, not narrative trust.
+
+### Pre-Phase-2 lints
+
+Two mechanical lint passes run before Part A validation dispatch, in this order: leakage-guard first, then `/mnt/session/`. Running leakage-guard first ensures unknown-key structural errors are resolved before path-format checks fire on known fields; otherwise a misclassified field could mask or be masked by a path complaint.
+
+#### Leakage-guard lint (runs first)
+
+Walks the draft spec's `api_fields` and flags any top-level key that is not a known API field for its domain.
+
+```
+Coverage check (runs first):
+  For every domain D present in api_fields of the draft spec:
+    If api_fields.<D> is non-empty AND design/api_schemas/<D>.json is missing:
+      Halt and surface:
+        "Domain '<D>' appears in api_fields but was never grounded in Phase 1.
+         Re-enter Phase 1 grounding for <D> before validation."
+
+Whitelist check (runs after coverage check passes):
+  For every domain with a design/api_schemas/<domain>.json file:
+    For every TOP-LEVEL key in api_fields of that domain's objects:
+      If key is not in the whitelist (fields[].name):
+        Halt and surface:
+          "Field '<key>' in <domain>.<path> is not a known API field for <domain>.
+           If this is design metadata, move to design_notes. If it should be an API field, re-ground <domain>."
+```
+
+**Scope.** Top-level keys only — does not descend into nested objects or arrays. This avoids false positives on legitimate nested structures like `integration_contracts[].touches[].event_shape`. Nested validation remains each specialist's responsibility during Part A.
 
 ### Part A — Validation dispatch (parallel)
 
