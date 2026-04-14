@@ -91,7 +91,7 @@ For each question:
 6. Say "ready when you are" or similar. Do NOT create the next task.
 7. When the user signals to continue, go to step 1.
 
-**Invariant:** At most one design task may be `pending` or `in_progress` at a time.
+**Invariant:** At most one task whose `subject` starts with `Design:` may be `pending` or `in_progress` at a time. Grounding tasks (`subject` starting `Ground:`) are not counted against this limit.
 
 ### Topic guide
 
@@ -103,9 +103,13 @@ Create questions dynamically based on previous answers. Use this as a reference 
 4. **Single agent or team?** — if team, how many and what roles
 5. **Model** — Opus / Sonnet / Haiku (Opus for reasoning-heavy, Sonnet for balanced, Haiku for speed)
 6. **Tools** — `agent_toolset_20260401` (full) or specific tools; any custom tools?
+   _Ground first: dispatch tools-expert and agents-expert in parallel._
 7. **Permission policies** — `always_allow` or `always_ask` for specific tools
+   _Ground first: dispatch tools-expert._
 8. **MCP servers** — external integrations (name + URL, no credentials)
+   _Ground first: dispatch mcp-vaults-expert._
 9. **Skills** — Anthropic pre-built (xlsx, pptx, docx, pdf) or custom
+   _Ground first: dispatch skills-expert._
 10. **Context budget** — before drafting the system prompt, separate:
     - **System prompt**: stable identity, role, rules, invariants (small, cache-friendly).
     - **Per-turn retrieval**: reference tables, templates, long lists, domain data — mount as files or keep in memory store, pull on demand.
@@ -114,20 +118,26 @@ Create questions dynamically based on previous answers. Use this as a reference 
     Push reference data *out* of the system prompt. Bloated system prompts waste cache and crowd out reasoning context.
 11. **System prompt** — draft one based on answers from 1–10, user confirms or edits. **Always its own gated task, one per agent.** In team mode, create a separate task per agent's system prompt (e.g., "Drafting system prompt for `coordinator`") so each is reviewed individually — never batch multiple drafts into one task.
 12. **Environment** — packages needed, networking mode (unrestricted vs limited). **Environments are stateless (cattle, not pets).** Run state must not live in container paths — route persistent state to session files, memory stores, or external storage. Confirm with the user that nothing in their design writes run state to the env filesystem.
+   _Ground first: dispatch environments-expert._
 13. **Resources** — GitHub repos or files to mount. For repos, ask which auth pattern:
+   _Ground first: dispatch files-expert and environments-expert in parallel._
     - **Wired git remote at provision time** (default): token baked into the local remote config during environment setup; the agent never sees it. Aligns with credentials-outside-sandbox.
     - **Public / no auth**: fine for public repos only.
     - **Token mounted into env** (discouraged): credential reachable from agent-generated code; only use if no alternative.
 14. **Runtime identity** — does each run need a correlation ID (e.g. `contract_id`, `case_id`)? If yes: who generates it (invoking bot, coordinator on session start, session metadata), and how is it passed to workers (session metadata, prompt variable, file path). Skip for single-shot agents.
 15. **Vaults** — existing vault IDs for MCP auth, or create new. Also ask: scope (org-wide vs project-scoped vs run-scoped), owner and rotation policy (who rotates, cadence), lifetime (permanent vs run-scoped).
+   _Ground first: dispatch mcp-vaults-expert._
 16. **Smoke test prompt** — what to send to verify the agent works
 17. **Persistent data** — first classify what needs to persist:
+   _Ground first: dispatch files-expert for file mounts or memory-expert for memory stores, depending on the classification._
     - **Static reference data** (chart of accounts, benchmark tables, constants, templates) → mount as files in the environment (route to `files-expert` + `environments-expert`, not memory stores).
     - **Learned or accumulating cross-session knowledge** (user preferences built up over time, contract history, feedback) → memory store (route to `memory-expert`, requires research preview access). Ask for existing store IDs or new name + description.
     - **Neither** → skip.
 18. **Outcome (optional)** — if the user wants goal-directed validation: description, rubric (inline or file), max_iterations (default 3, max 20). Requires research preview access.
 
 For teams: repeat agent-level questions for each agent (each agent's system prompt is its own gated task — see step 11), then run a single gated task **"Design: callable_agents wiring"** that captures:
+
+_Ground first: dispatch multiagent-expert to confirm callable_agents shape and dispatch-mode enum values before opening the wiring task._
 
 - **Caller → callee map**: which agents can invoke which (e.g. `coordinator → [ingestion, modeling, synthesis]`; workers typically cannot call each other).
 - **Dispatch mode per edge**: foreground (blocks caller, returns result) vs background (fire-and-forget, poll later). Default foreground unless the user states otherwise.
