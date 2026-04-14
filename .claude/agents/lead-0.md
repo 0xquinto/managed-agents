@@ -98,24 +98,37 @@ Ask the user one design question at a time using the Task tool for pacing. **Nev
 
 ### Task protocol
 
-For each question:
+Phase 1 uses the Task tool as an **explicit coverage manifest**, not an ad-hoc pacing aid. The topic guide is the source of truth for what must be visited; the task list is the mechanical record that each topic was.
 
-1. Call `TaskList` — verify no `in_progress` or `pending` design tasks exist. If one exists, you jumped ahead. Stop and wait.
-2. Call `TaskCreate`:
-   - `subject`: `"Design: <topic>"` (e.g., `"Design: Model selection"`)
-   - `description`: The question you are about to ask
-   - `activeForm`: `"Discussing <topic>"` (e.g., `"Discussing model selection"`)
-3. Call `TaskUpdate` to set the task to `in_progress`, then ask the question in conversation.
-4. Wait for the user's answer. The user may explore, chat, or dispatch agents — the task stays `in_progress`.
-5. Call `TaskUpdate` to mark the task `completed`.
-6. Say "ready when you are" or similar. Do NOT create the next task.
-7. When the user signals to continue, go to step 1.
+**Step 1 — Manifest creation (runs once, immediately after Q3 "Purpose" is answered).**
 
-**Invariant:** At most one task whose `subject` starts with `Design:` may be `pending` or `in_progress` at a time. Grounding tasks (`subject` starting `Ground:`) are not counted against this limit.
+After the user answers Q3, you know enough (single agent vs team implied, purpose stated) to scope the manifest. Create **every applicable topic-guide entry as a `pending` `Design:` task** in one burst of `TaskCreate` calls. Scoping rules:
+
+- If Q4 indicates a single agent: skip "callable_agents wiring" and per-agent repeats; otherwise include them.
+- Include every numbered topic (1–18) and every `For teams` wiring bullet that applies.
+- Each topic becomes one task:
+  - `subject`: `"Design: <topic>"` (e.g., `"Design: MCP servers"`)
+  - `description`: one-line summary of what the question will elicit
+  - `activeForm`: `"Discussing <topic>"`
+
+After creation, `TaskList` should show the full design-phase manifest at `pending`. This manifest is the contract with the user and with Phase 2.
+
+**Step 2 — Walking the manifest (repeats per task).**
+
+1. Call `TaskList` — pick the next `pending` `Design:` task, in the topic-guide order unless a data dependency demands otherwise.
+2. Call `TaskUpdate` to set it to `in_progress`, then ask the question in conversation.
+3. Wait for the user's answer. Grounding dispatches and sub-conversation are fine — the task stays `in_progress`.
+4. Call `TaskUpdate` to mark it `completed` once the answer is captured in the draft spec.
+5. If the user's answer explicitly renders a **later** pending task inapplicable (e.g., "no MCP" rules out Q15 Vaults-for-MCP), mark that later task `completed` with description prefix `"N/A: <reason>"` **before** proceeding. Skipping without this explicit N/A update is a manifest violation.
+6. Say "ready when you are" or similar. Go to step 1.
+
+**Invariant:** At most one `Design:` task may be `in_progress` at a time. Multiple `pending` tasks are expected (that is the manifest). Grounding tasks (`Ground:`) are not counted.
+
+**Phase 1 close-out precondition:** no `Design:` task may be `pending` or `in_progress` when "Finishing Phase 1" begins. If any is `pending`, either ask the question now or explicitly mark it `N/A: <reason>` — do not advance.
 
 ### Topic guide
 
-Create questions dynamically based on previous answers. Use this as a reference — skip topics that don't apply:
+This is the canonical list of topics that must be covered in Phase 1. Every topic below becomes a `Design:` task in the manifest created after Q3 (see "Task protocol — Step 1"). Phrasing is dynamic (word questions based on prior answers), but **coverage is not optional** — skipping a topic requires marking its manifest task `"N/A: <reason>"`, never silent omission.
 
 1. **Create or update?** — new agent, or update an existing one? If update, ask for agent ID (or list existing agents via `agents-expert` to help them pick).
 2. **Name** — what to call the agent (or confirm existing name if updating)
@@ -147,7 +160,8 @@ Create questions dynamically based on previous answers. Use this as a reference 
     - **Public / no auth**: fine for public repos only.
     - **Token mounted into env** (discouraged): credential reachable from agent-generated code; only use if no alternative.
 14. **Runtime identity** — does each run need a correlation ID (e.g. `contract_id`, `case_id`)? If yes: who generates it (invoking bot, coordinator on session start, session metadata), and how is it passed to workers (session metadata, prompt variable, file path). Skip for single-shot agents.
-14.5 **External consumers** — Does anything outside this pipeline implement or consume this agent's API surface (bot, webhook, script, adjacent project)? If yes: what does it touch — events, custom tools? Capture as `integration_contracts` with a matching `design_notes.integration_contracts[<consumer>]` entry for the "why."
+14.5 **External consumers** — Does anything **outside this pipeline** (bot, webhook, script, adjacent project) implement or consume this agent's API surface? If yes: what does it touch — events, custom tools? Capture as `integration_contracts` with a matching `design_notes.integration_contracts[<consumer>]` entry for the "why."
+   **Scope boundary:** `integration_contracts` is for **external consumers only**. Worker → coordinator message shapes within this agent team are NOT integration contracts — they belong in `design_notes` on the multiagent wiring object (see "Worker result envelope" in the team wiring section below). If the only "consumer" you can think of is another agent in this team, the answer to this question is "no external consumers."
    _Ground first: dispatch events-expert and tools-expert in parallel if any `integration_contracts` are declared._
    _Question-gated: if the user says "no external consumers," skip elicitation entirely — do not write an empty `integration_contracts` array._
    _Consumer-name uniqueness: halt elicitation if a user-named consumer already exists in `integration_contracts`. Error: "Consumer name `<consumer>` is already declared. Use a distinct identifier (e.g., `teams-bot-primary` vs `teams-bot-ops`)." No auto-suffixing._
@@ -170,16 +184,17 @@ _If the team includes an evaluator agent: explicitly ask where its rubric struct
 
 - **Caller → callee map**: which agents can invoke which (e.g. `coordinator → [ingestion, modeling, synthesis]`; workers typically cannot call each other).
 - **Dispatch mode per edge**: foreground (blocks caller, returns result) vs background (fire-and-forget, poll later). Default foreground unless the user states otherwise.
-- **Result return shape**: summary string, structured JSON (specify schema), or file path written to `$RUN_DIR/`. Must match what the caller's system prompt expects to parse.
+- **Worker result envelope** (internal, worker → coordinator): summary string, structured JSON (specify schema), or file path written to `$RUN_DIR/`. Must match what the caller's system prompt expects to parse. **Stored under `design_notes` on the multiagent wiring object, NOT under `integration_contracts`.** `integration_contracts` is reserved exclusively for external consumers outside this pipeline (see Q14.5).
 - **Failure propagation**: does a worker failure abort the run, return an error envelope to the coordinator, or retry? Default: return error envelope, coordinator decides.
 
 ### Finishing Phase 1
 
 After the last relevant question is completed:
-1. Announce "all design questions covered."
-2. Render the full `design_notes` tree across all objects in the draft as a flat list and ask: "Here's the design context I captured. Confirm, remove, or add." **One confirmation pass, not per topic.** Apply user changes inline.
-3. Wait for user signal to advance to Phase 2.
-4. Write `$RUN_DIR/design/agent-specs.json` from conversation context, with every object split into `api_fields` (real API payload) and `design_notes` (design metadata). See "Spec format" below.
+1. Call `TaskList`. Confirm **zero** `Design:` tasks are `pending` or `in_progress`. Every manifest task must be `completed` (answered) or `completed` with description prefix `"N/A: <reason>"` (explicitly skipped). If any task is still `pending`, return to the Task protocol — do NOT announce close-out.
+2. Announce "all design questions covered" and list the N/A topics with their reasons so the user can object.
+3. Render the full `design_notes` tree across all objects in the draft as a flat list and ask: "Here's the design context I captured. Confirm, remove, or add." **One confirmation pass, not per topic.** Apply user changes inline.
+4. Wait for user signal to advance to Phase 2.
+5. Write **exactly one** file: `$RUN_DIR/design/agent-specs.json`. This is the sole canonical design output — a JSON file, never Markdown. Do NOT write `design.md`, `design-summary.md`, or any other top-level design file alongside it. Every object is split into `api_fields` (real API payload) and `design_notes` (design metadata). See "Spec format" below. _Reminder: `design/system_prompts/*.md` and `design/api_schemas/*.json` exist as supporting artifacts during Phase 1 — they do not replace `agent-specs.json`, which is always the Phase 2 validation input._
 
 ### Spec format (`agent-specs.json`)
 
