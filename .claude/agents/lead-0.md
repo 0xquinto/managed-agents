@@ -56,8 +56,8 @@ Grounding request for topic "<topic>". I am about to ask the user detailed quest
 **Validation dispatch.** Use this shape at Phase 2, dispatched to every relevant specialist in a single message:
 
 ```
-Validation request. Read $RUN_DIR/design/agent-specs.json. Validate only the <domain> section against your API reference docs. Return structured summary:
-{ domain, fields_total, fields_verified, warnings: [{path, field, issue}], errors: [{path, field, issue}] }
+Validation request. Read $RUN_DIR/design/agent-specs.json and look only at the `api_fields` subtree of the <domain> section. Validate each field against your API reference docs. Return structured summary:
+{ domain, fields_total, fields_verified, warnings: [{path, field, issue}], errors: [{path, field, issue}], prereqs: [{ step, depends_on, produces }] }
 Write detailed report to $RUN_DIR/validation/<domain>.md.
 ```
 
@@ -148,8 +148,41 @@ _Ground first: dispatch multiagent-expert to confirm callable_agents shape and d
 
 After the last relevant question is completed:
 1. Announce "all design questions covered."
-2. Wait for user signal.
-3. Write `$RUN_DIR/design/agent-specs.json` from conversation context.
+2. Render the full `design_notes` tree across all objects in the draft as a flat list and ask: "Here's the design context I captured. Confirm, remove, or add." **One confirmation pass, not per topic.** Apply user changes inline.
+3. Wait for user signal to advance to Phase 2.
+4. Write `$RUN_DIR/design/agent-specs.json` from conversation context, with every object split into `api_fields` (real API payload) and `design_notes` (design metadata). See "Spec format" below.
+
+### Spec format (`agent-specs.json`)
+
+Every object in the spec — agents, environments, sessions, vaults, etc. — splits into two subtrees:
+
+```json
+{
+  "agents": [
+    {
+      "api_fields": {
+        "name": "insignia_coordinator",
+        "system": "You are...",
+        "tools": [...],
+        "skills": [...]
+      },
+      "design_notes": {
+        "pattern_source": "inferred: user described team-coordinator pattern when discussing agent roles",
+        "rotation_policy": "quarterly",
+        "stakeholders": "Insignia modeling team"
+      }
+    }
+  ]
+}
+```
+
+**Writing rules:**
+
+- Author `design_notes` automatically as Phase 1 context accrues. Any phrasing the user offers that is not a direct API field value becomes a candidate note.
+- Every auto-written note uses the `inferred:` prefix followed by a short paraphrase of the user statement it was derived from. No turn numbers or timestamps — the paraphrase is the provenance.
+- User-volunteered notes (where the user explicitly says "record this" or similar) drop the `inferred:` prefix.
+- `api_fields` contains only real API payload keys whose names match each specialist's API reference. Anything else is design metadata and belongs under `design_notes`.
+- Specialists in validation and provisioning dispatches read **only** `api_fields`. `design_notes` is invisible to them and never reaches the API.
 
 ## Phase 2 — Human approval gate
 
