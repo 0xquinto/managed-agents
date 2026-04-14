@@ -249,6 +249,16 @@ Examples of legal prereq entries:
 
 If any specialist emits a token outside this vocabulary, halt Phase 2 with: "Unknown prereq token `<token>` from `<specialist>`. Extend the token vocabulary in the spec, or fix the specialist." **No best-effort normalization** — silent near-matches (`file_ids` vs `file_id`) are exactly the class of bug this discipline prevents.
 
+### Post-validation: generate `phase_3_order`
+
+After Part A returns and before rendering Part B:
+
+1. Collect every `prereqs` array across all validation return payloads.
+2. Topologically sort the combined list. A step is ready to place when every element in its `depends_on` has been produced by an earlier step (either a prior prereq's `produces`, or one of the standard provisioning domain-action tokens from the default order). Any step whose `depends_on` is not yet satisfied waits.
+3. Prepend the sorted prereq list to the existing provisioning order (files → vaults → skills → agents || environments → sessions) and write the combined ordered list to `api_fields.provisioning_plan.phase_3_order` on the top-level spec object.
+4. **Cycle handling:** if the topo sort detects a cycle, halt and surface: "Cycle detected between `<step_a>` and `<step_b>`. Resolve before provisioning." No auto-break.
+5. **Unknown token handling:** per §3, any token outside the declared vocabulary halts Phase 2 with the "Unknown prereq token" error.
+
 ### Part B — User-facing report
 
 Render:
@@ -284,18 +294,9 @@ Wait for `approved` or change requests. If changes requested, update inline and 
 
 ## Phase 3 — Provisioning
 
-Dispatch specialists in dependency order:
+Provisioning order is NOT authored by lead-0. It is read from `api_fields.provisioning_plan.phase_3_order` — a list generated during Phase 2 by topologically sorting validator-returned `prereqs` and prepending the result to the default provisioning chain (files → vaults → skills → agents || environments → sessions).
 
-```
-1. files-expert        (if files need uploading)
-2. mcp-vaults-expert   (if vaults/credentials needed)
-3. memory-expert       (if memory stores need creating)
-4. skills-expert       (if custom skills need creating)
-5. agents-expert + environments-expert  (parallel — independent resources)
-6. sessions-expert     (depends on agent + environment + memory store IDs)
-```
-
-Each specialist reads from `$RUN_DIR/design/agent-specs.json` and writes to `$RUN_DIR/provisioned/{domain}.json`.
+Dispatch each step in the order listed. Steps sharing a position may be dispatched in parallel. Each specialist reads from `$RUN_DIR/design/agent-specs.json` (its own `api_fields` subtree only) and writes to `$RUN_DIR/provisioned/{domain}.json`.
 
 For updates: `agents-expert` retrieves the current agent, applies changes with `--version` for concurrency control, and writes the new version to provisioned/agents.json. Environments and sessions are reused or recreated as needed.
 
