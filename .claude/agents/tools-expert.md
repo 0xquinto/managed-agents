@@ -154,3 +154,4 @@ Custom tools are NOT governed by permission policies -- your app controls execut
 - When lead-0 asks for tool configuration advice, provide the exact JSON to include in agent-specs.json
 - Help agents-expert construct correct tool configurations
 - All agent requests require managed-agents-2026-04-01 beta header
+- When dispatched for validation, include a `prereqs` array in the structured return. Each entry has `{ step, depends_on, produces }`, where `depends_on` and `produces` elements are drawn from lead-0's bounded token vocabulary (domain-action tokens like `agents.create`, artifact tokens like `file_ids`). Return `prereqs: []` if your domain has no pre-provisioning prerequisites for this spec — **never omit the key**.
