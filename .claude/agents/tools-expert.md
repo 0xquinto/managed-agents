@@ -1,8 +1,7 @@
 ---
 name: tools-expert
 description: Configures built-in agent toolset, custom tools, MCP toolset references, and permission policies.
-tools: Read, Write, Bash, mcp__exa__web_search_exa, mcp__exa__web_search_advanced_exa, mcp__exa__crawling_exa, mcp__exa__get_code_context_exa
-skills: get-code-context-exa
+tools: Read, Write, Bash
 model: sonnet
 ---
 
