@@ -184,6 +184,6 @@ No data migration — all existing `runs/` output remains valid.
 
 None at design time. Open items for the implementation plan:
 
-- Exact wording of the grounding prompt template stored in `lead-0.md` (vs. inline each time).
+- Exact wording of the grounding prompt template stored in `lead-0.md` (vs. inline each time). **Resolved during implementation:** grounding and validation get verbatim templates in `lead-0.md`'s `## Dispatch defaults` section; research has no template (deliberate — the research prompt varies by question, so codifying it would mislead).
 - Whether the `Ground:` task invariant should be enforced by `lead-0` behaviorally only, or whether a light helper/convention is worth adding (likely: behavioral only, keeping the orchestrator lean).
-- Whether `tools-expert` loses its Exa skill reference entirely or keeps `get-code-context-exa` for code-snippet lookups in its own domain (decide during implementation by reading `tools-expert.md`).
+- Whether `tools-expert` loses its Exa skill reference entirely or keeps `get-code-context-exa` for code-snippet lookups in its own domain (decide during implementation by reading `tools-expert.md`). **Resolved during implementation:** fully removed. tools-expert's domain has no legitimate use for Exa; the skill belongs to research-expert.

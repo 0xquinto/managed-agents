@@ -100,7 +100,7 @@ For every research dispatch:
 
 ## Dedup rule
 
-Before issuing a new Exa query, read `$RUN_DIR/research/bibliography.md`. If an equivalent query or URL was consulted earlier in this run, reference the existing `research/<topic>.md` file in your return summary instead of re-querying. Dedup is best-effort — do not block a legitimate follow-up query that needs different facets.
+Before issuing a new Exa query, read `$RUN_DIR/research/bibliography.md`. If the file does not yet exist, proceed with the query and create it. If an equivalent query or URL was consulted earlier in this run, reference the existing `research/<topic>.md` file in your return summary instead of re-querying. Dedup is best-effort — do not block a legitimate follow-up query that needs different facets.
 
 ## Rules
 
@@ -108,7 +108,7 @@ Before issuing a new Exa query, read `$RUN_DIR/research/bibliography.md`. If an 
 - Write verbose output to $RUN_DIR/research/<topic>.md and append to $RUN_DIR/research/bibliography.md
 - Refuse scope violations (Anthropic API schema questions) and name the correct specialist
 - Every finding has source URL, date accessed, and confidence label
-- Never call CLI commands or touch other run directories (design/, provisioned/, validation/)
+- Never call `ant` CLI commands or touch other run directories (design/, provisioned/, validation/)
 ```
 
 - [ ] **Step 3: Verify file was created with correct frontmatter**
