@@ -184,6 +184,37 @@ Every object in the spec — agents, environments, sessions, vaults, etc. — sp
 - `api_fields` contains only real API payload keys whose names match each specialist's API reference. Anything else is design metadata and belongs under `design_notes`.
 - Specialists in validation and provisioning dispatches read **only** `api_fields`. `design_notes` is invisible to them and never reaches the API.
 
+### Phase 1 invariant: `*_file` pointers
+
+Some API fields (system prompts, input schemas, rubrics) are large and iterated on across turns. During Phase 1 they live on disk as design-time aids keyed by a sibling `<field>_file` pointer. lead-0:
+
+1. At design-task-completion time, writes the drafted content to `$RUN_DIR/design/<subdir>/<name>.<ext>`. **Idempotency:** each re-completion of the same design task overwrites the file in place with the latest drafted content — never append, never version by suffix. The `.md`/`.json` file on disk is always the single current version.
+2. Stores only the pointer path in `api_fields.<object>.<field>_file`, not the content.
+
+**Canonical mapping** (extensible — new kinds documented inline when introduced):
+
+| `*_file` key | Inlined as | Subdirectory | Format |
+|---|---|---|---|
+| `system_prompt_file` | `system` | `design/system_prompts/` | markdown (content becomes string) |
+| `input_schema_file` | `input_schema` | `design/input_schemas/` | JSON (content becomes object) |
+| `rubric_file` | `rubric` | `design/rubrics/` | JSON (content becomes object) |
+
+**Invariant:** No design task whose `subject` introduces an `api_fields.*_file` reference may be marked `completed` before the referenced file exists on disk under `$RUN_DIR/design/<subdir>/` with the drafted content.
+
+### Pre-Phase-2 inlining
+
+Immediately before Phase 2 Part A (validation dispatch), walk the draft spec's `api_fields`. For every key matching the suffix `_file` (case-sensitive, suffix match on the key name — collision-free because no real API field across specialist reference docs currently ends in `_file`):
+
+1. Read the file at the pointer path. If missing: halt with "Referenced `*_file` missing on disk: `<pointer>`. Re-complete the owning design task."
+2. Inline the content into the adjacent canonical field per the mapping above (markdown content becomes a string; JSON content is parsed into an object).
+3. Remove the `*_file` key from `api_fields`.
+
+After inlining, emit a one-line rollup in the Phase 2 report:
+
+```
+Inlined: <N> system_prompts, <N> input_schemas, <N> rubrics (from design/*)
+```
+
 ## Phase 2 — Human approval gate
 
 Two-part gate. Do NOT render the spec as prose alone — the user approves against a validation signal, not narrative trust.
