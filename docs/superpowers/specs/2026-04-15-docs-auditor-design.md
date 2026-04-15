@@ -1,11 +1,11 @@
 # docs-auditor — design
 
-**Date:** 2026-04-15
+**Date:** 2026-04-15 (revised after smoke-test findings)
 **Status:** approved for planning
 
 ## Goal
 
-Provide an on-demand helper agent that the main Claude Code conversation calls during a manual review of the 11 expert agents under `.claude/agents/`. The helper fetches authoritative upstream sections from `https://platform.claude.com/docs/en/api/cli/beta` so the reviewer can diff each expert's embedded CLI/API docs against the live source and produce per-agent freshness reports.
+Provide an on-demand helper agent that the main Claude Code conversation calls during a manual review of the 11 expert agents under `.claude/agents/`. The helper fetches authoritative upstream content from the Anthropic CLI beta docs at `https://platform.claude.com/docs/en/api/cli/beta/*` so the reviewer can diff each expert's embedded CLI/API docs against the live source and produce per-agent freshness reports.
 
 The helper does **not** audit on its own. The reviewer drives the loop and makes editorial calls; the helper is a docs-lookup specialist.
 
@@ -14,52 +14,73 @@ The helper does **not** audit on its own. The reviewer drives the loop and makes
 - No auto-editing of agent files.
 - No background scheduling, cron, git hooks, or CI integration.
 - No persistent cache across review sessions.
-- No coverage of docs outside `https://platform.claude.com/docs/en/api/cli/beta`.
+- No coverage of docs outside the `https://platform.claude.com/docs/en/api/cli/beta/*` tree.
 
 ## Architecture
 
 A new Sonnet specialist at `.claude/agents/docs-auditor.md`, invoked from the main Claude Code conversation. It is **not** wired through `lead-0` — this is dev tooling, not part of the production managed-agent provisioning pipeline, so the "only lead-0 spawns subagents" invariant does not apply.
 
+### Source structure (discovered at smoke test)
+
+The canonical docs are a **tree** of per-subcommand pages, not a single URL:
+
+- Per-subcommand content: `https://platform.claude.com/docs/en/api/cli/beta/<domain>/<action>` (e.g., `/cli/beta/agents/create`). Nested domains use additional path segments (`/cli/beta/sessions/events/send`).
+- Sitemap: `https://platform.claude.com/sitemap.xml` lists every path exhaustively.
+
+**JS-rendering caveat:** per-subcommand pages are Next.js SPAs whose raw HTML contains only "Loading…" placeholders. `WebFetch` and plain HTTP fetches return empty shells. Content is only extractable via `mcp__exa__crawling_exa` (which handles JS rendering) or the `get-code-context-exa` skill (semantic search + retrieval). The sitemap is plain XML and is fetchable with `WebFetch`.
+
 ### Tools
 
-- `WebFetch` — primary source for the canonical CLI beta page.
-- `Read`, `Grep` — for cross-referencing local agent files in `coverage` mode.
-- `mcp__exa__crawling_exa` — fallback when `WebFetch` fails or returns poorly rendered HTML.
-- `mcp__exa__web_search_exa`, `mcp__exa__get_code_context_exa` — augmentation when the reviewer asks for real-world usage examples of a flag or when upstream semantics are ambiguous.
+- `WebFetch` — sitemap only (plain XML).
+- `Read`, `Grep` — for cross-referencing local agent files in coverage mode.
+- `mcp__exa__crawling_exa` — primary fetcher for per-subcommand pages.
+- `mcp__exa__web_search_exa` — augmentation only, default OFF, requires explicit caller request.
+- `mcp__exa__get_code_context_exa` — listed for tool permission, but the agent invokes it via the skill (below), not directly.
 
 ### Skills
 
-- `get-code-context-exa` — for fetching code snippets demonstrating CLI usage when explicitly requested.
+- `get-code-context-exa` — section-mode fallback. Used when `mcp__exa__crawling_exa` returns "Not Found" or truncated content. The skill wraps query-construction and result-interpretation guidance around the underlying `mcp__exa__get_code_context_exa` tool.
 
 ## Modes
 
 The caller's prompt selects the mode. The agent prompt specifies the input shape and output shape for each.
 
-### Mode 1 — `section`
+### Mode 1 — section
 
-**Input:** a subcommand identifier (e.g., `ant beta:sessions create`).
-
-**Behavior:** `WebFetch` the canonical URL with a prompt to extract the named section verbatim — including all flags, positional args, examples, notes, and any related `beta:*` variants linked from that section.
-
-**Output:** the raw excerpt, unmodified, plus the URL anchor. Never paraphrase, never summarize, never reorder. The caller is performing a line-level diff against the agent file's embedded docs, so fidelity matters.
-
-If `WebFetch` fails or returns degraded content, fall back to `mcp__exa__crawling_exa` on the same URL. If both fail, return an explicit failure message — do not synthesize content.
-
-### Mode 2 — `coverage`
-
-**Input:** none (or an explicit "run coverage" trigger).
+**Input:** one subcommand identifier in `ant beta:<domain>[:<sub>]:<action>` form (e.g., `ant beta:agents:create`).
 
 **Behavior:**
-1. Fetch the canonical URL.
-2. Extract the full list of `ant beta:*` subcommands present upstream.
-3. `Grep` `.claude/agents/*.md` for `ant beta:` references to determine which subcommands the local agents already cover.
-4. Diff the two sets.
 
-**Output:** a list of upstream subcommands not present in any local agent file, each with a one-line description from upstream and the anchor URL.
+1. Convert the identifier to a URL under `https://platform.claude.com/docs/en/api/cli/beta/<domain>/<action>`.
+2. Call `mcp__exa__crawling_exa` with that URL.
+3. If the crawl returns "Not Found" or content that is empty/truncated, fall back to the `get-code-context-exa` skill with a query naming the subcommand.
+4. If both fail, return the failure string. Never synthesize content.
+
+**Output:** the raw excerpt, unmodified, plus the URL. Never paraphrase, summarize, or reorder — the caller is performing a line-level diff.
+
+If the named subcommand is not present upstream (crawl "Not Found" AND skill returns nothing authoritative), return:
+`NOT FOUND: \`ant beta:<subcommand>\` is not documented at <url>`
+
+### Mode 2 — coverage
+
+**Input:** none, or an explicit "run coverage" trigger.
+
+**Behavior:**
+
+1. `WebFetch` `https://platform.claude.com/sitemap.xml` (plain XML).
+2. Extract `<loc>` entries matching `/docs/en/api/cli/beta/<path>`. Keep only **leaf** URLs (drop domain-index URLs whose children are also present).
+3. Convert each URL path to a subcommand token: `/cli/beta/agents/create` → `ant beta:agents:create`; `/cli/beta/sessions/events/send` → `ant beta:sessions:events:send`.
+4. Partition the upstream set by an **in-scope whitelist** of top-level domains our pipeline owns:
+   `agents, environments, files, sessions, skills, vaults`.
+   Everything else (e.g., `messages`, `models`) is out-of-scope — these are standard API CLI subcommands, not managed-agents concerns.
+5. `Grep` `.claude/agents/*.md` with regex `ant beta:[a-z0-9:_-]+` (case-sensitive) to collect locally-referenced tokens. Exclude negation-context matches (prohibitions / refuse directives) by scanning the surrounding line.
+6. Diff: (in-scope upstream) minus (local) = **in-scope gaps**. Out-of-scope upstream is reported as FYI regardless of local presence.
+
+**Output:** two sections grouped under a single report — `### In-scope gaps (need fixing)` and `### Out-of-scope upstream (FYI)`. The FYI section is always present, even if empty of meaningful action.
 
 ### Augmentation (cross-cutting)
 
-When the reviewer's question goes beyond "show me section X" — for example, "what does flag `--foo` actually do in practice?" — the agent may use `get-code-context-exa` or `mcp__exa__web_search_exa` to find real-world examples. These results MUST be clearly labeled in the response as "external example, not authoritative" so the reviewer does not confuse them with the canonical source.
+When the reviewer explicitly asks for real-world usage examples (not just "show me section X"), the agent may use `mcp__exa__web_search_exa`. Skill-derived and augmentation content MUST be labeled `augmentation, not canonical crawl` in the response so the reviewer never confuses it with a direct canonical-source fetch.
 
 ## Review flow (driven from main conversation)
 
@@ -69,14 +90,10 @@ The reviewer drives this loop manually; the helper is invoked per step.
 2. For each of the 11 experts:
    - Read the agent file.
    - Identify which `ant beta:*` subcommands it owns.
-   - Dispatch `docs-auditor` in `section` mode for each owned subcommand. These dispatches can run in parallel since each is independent.
+   - Dispatch `docs-auditor` in `section` mode for each owned subcommand. Dispatches can run in parallel.
    - Diff upstream excerpt vs. embedded docs.
-   - Write `runs/$RUN_ID/agent-audits/<agent>.md` with three buckets:
-     - **Stale** — agent text contradicts current upstream (e.g., flag renamed, default changed).
-     - **Missing** — upstream has flags, args, notes, or examples the agent file lacks.
-     - **Inaccurate** — agent makes a claim upstream refutes.
-   - Each entry quotes both sides and includes line refs into the agent file.
-3. One final `docs-auditor` call in `coverage` mode → `runs/$RUN_ID/agent-audits/_coverage.md` listing uncovered upstream subcommands.
+   - Write `runs/$RUN_ID/agent-audits/<agent>.md` with three buckets: **Stale**, **Missing**, **Inaccurate**. Each entry quotes both sides and includes line refs into the agent file.
+3. One final `docs-auditor` call in `coverage` mode → `runs/$RUN_ID/agent-audits/_coverage.md` listing uncovered upstream subcommands (grouped in-scope / out-of-scope).
 
 ## Output format
 
@@ -86,7 +103,7 @@ Per-agent report (`runs/$RUN_ID/agent-audits/<agent>.md`):
 # <agent-name> — docs freshness audit
 **Reviewed:** YYYY-MM-DD
 **Subcommands covered:** ant beta:foo, ant beta:bar
-**Source:** https://platform.claude.com/docs/en/api/cli/beta
+**Source tree:** https://platform.claude.com/docs/en/api/cli/beta/*
 
 ## Stale
 - **`ant beta:foo --bar`** (agent line 42)
@@ -106,9 +123,14 @@ Coverage report (`runs/$RUN_ID/agent-audits/_coverage.md`):
 ```markdown
 # Upstream coverage gaps
 **Reviewed:** YYYY-MM-DD
-**Source:** https://platform.claude.com/docs/en/api/cli/beta
+**Source:** https://platform.claude.com/sitemap.xml
 
-- **`ant beta:newthing`** — <one-line upstream description> — no local agent covers this.
+## In-scope gaps (need fixing)
+- **`ant beta:<subcommand>`** — <one-line upstream description> — <url>
+- ...
+
+## Out-of-scope upstream (FYI)
+- **`ant beta:messages:create`** — <one-line upstream description> — <url>
 - ...
 ```
 
@@ -117,17 +139,17 @@ Coverage report (`runs/$RUN_ID/agent-audits/_coverage.md`):
 `.claude/agents/docs-auditor.md` contains:
 
 1. **Role** — "Docs freshness auditor for Anthropic CLI beta. Returns verbatim upstream excerpts so the caller can diff against local agent files."
-2. **Source URL** — the single canonical URL.
+2. **Sources** — per-subcommand URL pattern + sitemap URL; JS-rendering caveat.
 3. **Mode contract** — input/output shape for `section` and `coverage`.
-4. **Tool selection rules** — `WebFetch` first, Exa crawl fallback, Exa search/code-context only on explicit augmentation request.
-5. **Verbatim rule** — never paraphrase or summarize the canonical page.
-6. **Labeling rule** — Exa-derived content must be flagged as "external example, not authoritative."
-7. **Failure mode** — if both `WebFetch` and `mcp__exa__crawling_exa` fail, return an explicit failure; never synthesize.
+4. **Tool selection rules** — Exa crawl primary for section, skill fallback, WebFetch for sitemap only.
+5. **Verbatim rule** — never paraphrase canonical content.
+6. **Labeling rule** — skill/search-derived content must be flagged `augmentation, not canonical crawl`.
+7. **Failure mode** — explicit failure string, never synthesize.
 
 ## Out of scope
 
 - Auto-applying suggested edits to agent files.
 - Caching across review sessions.
 - Scheduling / background execution.
-- Auditing docs sources other than the canonical CLI beta page.
-- Validating non-CLI portions of expert agents (e.g., the operational rules sections).
+- Auditing docs sources other than the `cli/beta/*` tree.
+- Validating non-CLI portions of expert agents (e.g., API reference bodies, operational rules sections).
