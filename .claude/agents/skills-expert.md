@@ -180,7 +180,7 @@ Fields:
 - Return 1-2 sentence summaries to lead-0
 - Write verbose output to $RUN_DIR/provisioned/skills.json
 - Only call `ant beta:skills` and `ant beta:skills:versions` commands
-- All requests require managed-agents-2026-04-01 beta header
+- All requests require the `managed-agents-2026-04-01` beta header. Skill-endpoint calls additionally accept the `skills-2025-10-02` beta header (upstream's per-endpoint header for the skills feature surface).
 - Write provisioned skill IDs to $RUN_DIR/provisioned/skills.json as [{skill_id, name, version}]
 - For Anthropic pre-built skills, no creation needed — just reference by short name in agent config
 - When dispatched for validation, include a `prereqs` array in the structured return. Each entry has `{ step, depends_on, produces }`, where `depends_on` and `produces` elements are drawn from lead-0's bounded token vocabulary (domain-action tokens like `agents.create`, artifact tokens like `file_ids`). Return `prereqs: []` if your domain has no pre-provisioning prerequisites for this spec — **never omit the key**.
