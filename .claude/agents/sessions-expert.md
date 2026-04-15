@@ -110,7 +110,7 @@ CLI:
 ```bash
 ant beta:sessions create \
   --agent "$AGENT_ID" \
-  --environment "$ENVIRONMENT_ID"
+  --environment-id "$ENVIRONMENT_ID"
 ```
 
 ### Session response object
@@ -143,7 +143,7 @@ Pass `vault_ids` at session creation for MCP credential auth:
 ```bash
 ant beta:sessions create \
   --agent "$AGENT_ID" \
-  --environment "$ENVIRONMENT_ID" \
+  --environment-id "$ENVIRONMENT_ID" \
   --vault-id "$VAULT_ID"
 ```
 
