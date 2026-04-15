@@ -107,9 +107,9 @@ Update semantics:
 - Omitted fields are preserved
 - Scalar fields (model, system, name) are replaced
 - Array fields (tools, mcp_servers, skills, callable_agents) are fully replaced
-- Metadata is merged at key level (set to empty string to delete)
+- Metadata is merged at key level: set a key to a string to upsert, or to `null` to delete it
 - No-op updates don't create new versions
-- `system` and `description` can be cleared with null
+- `system` and `description` can be cleared with `null` or an empty string
 - `model` and `name` cannot be cleared
 
 ### Agent lifecycle
