@@ -21,10 +21,10 @@ USAGE:
 
 OPTIONS:
    --name string              Human-readable name
-   --config cloud             Cloud environment configuration (omitted fields preserve existing)
+   --config cloud             Cloud environment configuration
    --description value        Optional description
    --metadata string=any      Key-value pairs
-   --beta string              Beta version header
+   --beta string              Beta version header (repeatable)
 ```
 
 ```
@@ -37,7 +37,7 @@ USAGE:
 
 OPTIONS:
    --environment-id string
-   --beta string
+   --beta string              Beta version header (repeatable)
 ```
 
 ```
@@ -52,9 +52,9 @@ OPTIONS:
    --environment-id string
    --config cloud             Cloud environment configuration
    --description value        Updated description
-   --metadata string=any      Key-value pairs (null to delete)
+   --metadata string=any      Key-value pairs (null or empty string to delete)
    --name value               Updated name
-   --beta string
+   --beta string              Beta version header (repeatable)
 ```
 
 ```
@@ -68,8 +68,8 @@ USAGE:
 OPTIONS:
    --include-archived         Include archived environments
    --limit int                Max environments to return
-   --page next_page           Pagination cursor
-   --beta string
+   --page next_page           Pagination cursor (pass the `next_page` value from the previous response)
+   --beta string              Beta version header (repeatable)
    --max-items int
 ```
 
@@ -83,7 +83,7 @@ USAGE:
 
 OPTIONS:
    --environment-id string
-   --beta string
+   --beta string              Beta version header (repeatable)
 ```
 
 ```
@@ -96,7 +96,7 @@ USAGE:
 
 OPTIONS:
    --environment-id string
-   --beta string
+   --beta string              Beta version header (repeatable)
 ```
 
 ## API Reference
