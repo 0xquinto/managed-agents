@@ -77,9 +77,9 @@ OPTIONS:
 | `name` | Required. Human-readable name. 1-256 characters. |
 | `model` | Required. Claude model. All Claude 4.5+ models supported. Pass as string or object `{"id": "claude-opus-4-6", "speed": "fast"}` for fast mode. |
 | `system` | System prompt defining behavior and persona. Up to 100,000 chars. |
-| `tools` | Tools available. Combines pre-built agent tools, MCP tools, and custom tools. Max 128. |
-| `mcp_servers` | MCP servers for third-party capabilities. Max 20. |
-| `skills` | Skills for domain-specific context. Max 20. |
+| `tools` | Tools available. Three variants: `agent_toolset_20260401` (built-in: bash, edit, read, write, glob, grep, web_fetch, web_search), `mcp_toolset` (references an `mcp_server_name` from `mcp_servers`), and `custom` (client-executed). Each has per-tool `configs` overrides, a `default_config`, and a `permission_policy` of `always_allow` or `always_ask`. Max 128 across all toolsets. See tools-expert for full schema. |
+| `mcp_servers` | MCP servers for third-party capabilities. Each entry is `{name: string (1-255 chars, unique within array), type: "url", url: string}`. Max 20. |
+| `skills` | Skills for domain-specific context. Each entry is `{skill_id: string, type: "anthropic" \| "custom", version?: string}`. Max 20. See skills-expert. |
 | `callable_agents` | Other agents this agent can invoke (multi-agent, research preview). |
 | `description` | Description of what the agent does. Up to 2048 chars. |
 | `metadata` | Key-value pairs. Max 16, keys 64 chars, values 512 chars. |
@@ -97,7 +97,28 @@ ant beta:agents create \
   --tool '{type: agent_toolset_20260401}'
 ```
 
-Response includes: `id`, `type: "agent"`, `version` (starts at 1), `created_at`, `updated_at`, `archived_at`.
+Full `BetaManagedAgentsAgent` response shape:
+
+```json
+{
+  "id": "agent_...",
+  "type": "agent",
+  "version": 1,
+  "name": "...",
+  "description": "...",
+  "system": "...",
+  "model": {"id": "claude-sonnet-4-6", "speed": "standard"},
+  "tools": [],
+  "mcp_servers": [],
+  "skills": [],
+  "metadata": {},
+  "created_at": "2026-04-15T...",
+  "updated_at": "2026-04-15T...",
+  "archived_at": null
+}
+```
+
+Returned by create / retrieve / update / archive. `archived_at` is `null` for active agents and a timestamp once archived.
 
 ### Update an agent
 
@@ -125,6 +146,26 @@ Update semantics:
 - `claude-haiku-4-5` / `claude-haiku-4-5-20251001` -- Fastest
 - `claude-opus-4-5` / `claude-opus-4-5-20251101`
 - `claude-sonnet-4-5` / `claude-sonnet-4-5-20250929`
+
+### Speed modes
+
+Model configs accept an optional `speed` field:
+
+- `"standard"` (default) — normal inference
+- `"fast"` — significantly faster output token generation at premium pricing. Not all models support `fast`; invalid model+speed combinations are rejected at create time.
+
+Pass as `{"id": "claude-opus-4-6", "speed": "fast"}` to opt in.
+
+### Custom tool loop
+
+Custom tools are executed by the API client, not the agent. When the agent invokes a custom tool:
+
+1. An `agent.custom_tool_use` event is emitted with the tool name, inputs, and a `custom_tool_use_id`.
+2. The session transitions to `idle`, waiting for the client.
+3. The client computes the result and sends it back as a `user.custom_tool_result` event referencing the same `custom_tool_use_id`.
+4. The session resumes.
+
+Custom tool definitions require `{name, description, input_schema, type: "custom"}`. See events-expert for the event envelope details.
 
 ## Rules
 
