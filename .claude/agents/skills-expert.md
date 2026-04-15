@@ -131,6 +131,50 @@ ant beta:skills:versions create \
   --file ./updated-skill-directory
 ```
 
+### Response shapes
+
+**Skill response** — returned by `ant beta:skills create` / `retrieve`:
+
+```json
+{
+  "id": "skill_...",
+  "type": "skill",
+  "display_title": "...",
+  "source": "custom",
+  "latest_version": "1759178010641129",
+  "created_at": "2026-04-15T...",
+  "updated_at": "2026-04-15T..."
+}
+```
+
+Fields:
+- `source`: `"custom"` for user-created skills, `"anthropic"` for Anthropic-managed skills (e.g., `xlsx`).
+- `latest_version`: Unix epoch timestamp string of the most recent version.
+
+**Skill version response** — returned by `ant beta:skills:versions create` / `retrieve`:
+
+```json
+{
+  "id": "skillver_...",
+  "type": "skill_version",
+  "skill_id": "skill_...",
+  "version": "1759178010641129",
+  "name": "extracted from SKILL.md",
+  "description": "extracted from SKILL.md",
+  "directory": "extracted from top-level dir name in upload",
+  "created_at": "2026-04-15T..."
+}
+```
+
+`name`, `description`, and `directory` are extracted from the uploaded content: `name` / `description` come from SKILL.md front matter; `directory` is the top-level directory name in the uploaded archive.
+
+**Delete response envelopes**:
+
+```json
+{"id": "skill_...", "type": "skill_deleted"}
+{"id": "skillver_...", "type": "skill_version_deleted"}
+```
+
 ## Rules
 
 - Return 1-2 sentence summaries to lead-0
