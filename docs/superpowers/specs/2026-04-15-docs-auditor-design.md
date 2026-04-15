@@ -71,7 +71,7 @@ If the named subcommand is not present upstream (crawl "Not Found" AND skill ret
 
 1. Fetch the sitemap via `Bash`: `curl -s https://platform.claude.com/sitemap.xml` (the only sanctioned shell command).
 2. Extract `<loc>` entries matching `/docs/en/api/cli/beta/<path>`. Keep only **leaf** URLs (drop domain-index URLs whose children are also present).
-3. Convert each URL path to a subcommand token: `/cli/beta/agents/create` → `ant beta:agents:create`; `/cli/beta/sessions/events/send` → `ant beta:sessions:events:send`.
+3. Convert each URL path to a subcommand token: `/cli/beta/agents/create` → `ant beta:agents:create`; `/cli/beta/sessions/events/send` → `ant beta:sessions:events:send`. **Normalize underscores to hyphens in the final path segment** — upstream URL slugs use `_` (e.g., `retrieve_metadata`, `count_tokens`) but the actual CLI uses `-`. Matching local against upstream without this normalization produces false-positive gaps.
 4. Partition the upstream set by an **in-scope whitelist** of top-level domains our pipeline owns:
    `agents, environments, files, sessions, skills, vaults`.
    Everything else (e.g., `messages`, `models`) is out-of-scope — these are standard API CLI subcommands, not managed-agents concerns.

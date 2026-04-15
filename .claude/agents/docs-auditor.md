@@ -75,7 +75,7 @@ NOT FOUND: `ant beta:<subcommand>` is not documented at https://platform.claude.
 
 1. Run `Bash`: `curl -s https://platform.claude.com/sitemap.xml`. Do NOT use `WebFetch` (mangles XML) or `mcp__exa__crawling_exa` (rejects XML content type).
 2. Extract all `<loc>` entries whose path matches `/docs/en/api/cli/beta/<path>`. Keep only **leaf** URLs (paths that don't have children also present — e.g., keep `/cli/beta/agents/create` but drop the domain-index `/cli/beta/agents` when its children are present). A reasonable extraction pipeline: `curl -s <sitemap> | grep -oE 'https://platform\.claude\.com/docs/en/api/cli/beta/[a-z0-9/_-]+' | sort -u`.
-3. Convert each URL path to a subcommand token: `/docs/en/api/cli/beta/agents/create` → `ant beta:agents:create`. For nested: `/docs/en/api/cli/beta/sessions/events/send` → `ant beta:sessions:events:send`.
+3. Convert each URL path to a subcommand token: `/docs/en/api/cli/beta/agents/create` → `ant beta:agents:create`. For nested: `/docs/en/api/cli/beta/sessions/events/send` → `ant beta:sessions:events:send`. **Normalize underscores to hyphens in the final path segment** — upstream URL slugs use `_` (e.g., `retrieve_metadata`, `count_tokens`) but the actual CLI subcommand names use `-` (`retrieve-metadata`, `count-tokens`). Token comparison against local agent files MUST use the hyphenated form, otherwise every `_`-containing URL is reported as a false-positive gap.
 4. Partition the upstream token set by the **in-scope whitelist**:
 
    In-scope top-level domains: `agents`, `environments`, `files`, `sessions`, `skills`, `vaults`.
