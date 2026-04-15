@@ -27,11 +27,13 @@ The canonical docs are a **tree** of per-subcommand pages, not a single URL:
 - Per-subcommand content: `https://platform.claude.com/docs/en/api/cli/beta/<domain>/<action>` (e.g., `/cli/beta/agents/create`). Nested domains use additional path segments (`/cli/beta/sessions/events/send`).
 - Sitemap: `https://platform.claude.com/sitemap.xml` lists every path exhaustively.
 
-**JS-rendering caveat:** per-subcommand pages are Next.js SPAs whose raw HTML contains only "Loading…" placeholders. `WebFetch` and plain HTTP fetches return empty shells. Content is only extractable via `mcp__exa__crawling_exa` (which handles JS rendering) or the `get-code-context-exa` skill (semantic search + retrieval). The sitemap is plain XML and is fetchable with `WebFetch`.
+**JS-rendering caveat:** per-subcommand pages are Next.js SPAs whose raw HTML contains only "Loading…" placeholders. `WebFetch` and plain HTTP fetches return empty shells. Content is only extractable via `mcp__exa__crawling_exa` (which handles JS rendering) or the `get-code-context-exa` skill (semantic search + retrieval).
+
+**Sitemap caveat (discovered at second smoke test):** the sitemap is plain XML. `mcp__exa__crawling_exa` rejects it with `CRAWL_UNEXPECTED_CONTENT_TYPE`. `WebFetch` mangles it through HTML-to-markdown conversion and reports zero matches for `/cli/beta/` entries that are demonstrably present when fetched with `curl`. The only reliable fetcher is plain HTTP via `Bash` + `curl`.
 
 ### Tools
 
-- `WebFetch` — sitemap only (plain XML).
+- `Bash` — sitemap fetch only (`curl -s https://platform.claude.com/sitemap.xml`). Scoped in the agent prompt to this single use; no other shell commands permitted.
 - `Read`, `Grep` — for cross-referencing local agent files in coverage mode.
 - `mcp__exa__crawling_exa` — primary fetcher for per-subcommand pages.
 - `mcp__exa__web_search_exa` — augmentation only, default OFF, requires explicit caller request.
@@ -67,7 +69,7 @@ If the named subcommand is not present upstream (crawl "Not Found" AND skill ret
 
 **Behavior:**
 
-1. `WebFetch` `https://platform.claude.com/sitemap.xml` (plain XML).
+1. Fetch the sitemap via `Bash`: `curl -s https://platform.claude.com/sitemap.xml` (the only sanctioned shell command).
 2. Extract `<loc>` entries matching `/docs/en/api/cli/beta/<path>`. Keep only **leaf** URLs (drop domain-index URLs whose children are also present).
 3. Convert each URL path to a subcommand token: `/cli/beta/agents/create` → `ant beta:agents:create`; `/cli/beta/sessions/events/send` → `ant beta:sessions:events:send`.
 4. Partition the upstream set by an **in-scope whitelist** of top-level domains our pipeline owns:
@@ -141,7 +143,7 @@ Coverage report (`runs/$RUN_ID/agent-audits/_coverage.md`):
 1. **Role** — "Docs freshness auditor for Anthropic CLI beta. Returns verbatim upstream excerpts so the caller can diff against local agent files."
 2. **Sources** — per-subcommand URL pattern + sitemap URL; JS-rendering caveat.
 3. **Mode contract** — input/output shape for `section` and `coverage`.
-4. **Tool selection rules** — Exa crawl primary for section, skill fallback, WebFetch for sitemap only.
+4. **Tool selection rules** — Exa crawl primary for section, skill fallback, Bash+curl for sitemap only.
 5. **Verbatim rule** — never paraphrase canonical content.
 6. **Labeling rule** — skill/search-derived content must be flagged `augmentation, not canonical crawl`.
 7. **Failure mode** — explicit failure string, never synthesize.
