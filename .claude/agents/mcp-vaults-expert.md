@@ -263,6 +263,7 @@ auth:
     token_endpoint: https://slack.com/api/oauth.v2.access
     client_id: "1234567890.0987654321"
     scope: channels:read chat:write
+    resource: https://mcp.slack.com/mcp  # optional OAuth resource indicator
     refresh_token: xoxe-1-...
     token_endpoint_auth:
       type: client_secret_post
@@ -333,6 +334,33 @@ Runtime behavior:
 - **Archive vault**: `POST /v1/vaults/{id}/archive` — cascades to credentials, purges secrets, retained for audit
 - **Archive credential**: `POST /v1/vaults/{id}/credentials/{cred_id}/archive` — purges secret, URL remains visible, frees URL for replacement
 - **Delete**: Hard delete, no audit trail
+
+### Response shapes
+
+**Credential response (`BetaManagedAgentsCredential`)** — returned by credential create / retrieve / update / archive:
+
+```json
+{
+  "id": "vcred_...",
+  "type": "vault_credential",
+  "vault_id": "vault_...",
+  "display_name": "...",
+  "auth": { "type": "static_bearer" },
+  "metadata": {},
+  "created_at": "2026-04-15T...",
+  "updated_at": "2026-04-15T...",
+  "archived_at": null
+}
+```
+
+Sensitive fields (tokens, secrets) are never returned — the `auth` block shows only the shape / type discriminator, not the stored secret.
+
+**Delete response envelopes**:
+
+```json
+{"id": "vault_...", "type": "vault_deleted"}
+{"id": "vcred_...", "type": "vault_credential_deleted"}
+```
 
 ## Rules
 
