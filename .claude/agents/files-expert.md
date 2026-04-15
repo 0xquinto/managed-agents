@@ -160,6 +160,45 @@ The agent can work with any file type:
 - The Files API uses the `files-api-2025-04-14` beta header in addition to the managed agents header.
 - Default mount path when none specified: `/mnt/session/uploads/<file_id>`
 
+### Response shapes
+
+**`FileMetadata`** — returned by upload / retrieve-metadata:
+
+```json
+{
+  "id": "file_...",
+  "type": "file",
+  "filename": "data.csv",
+  "mime_type": "text/csv",
+  "size_bytes": 12345,
+  "created_at": "2026-04-15T...",
+  "downloadable": true,
+  "scope": { "id": "ses_...", "type": "session" }
+}
+```
+
+**`DeletedFile`** — returned by delete:
+
+```json
+{
+  "id": "file_...",
+  "type": "file_deleted"
+}
+```
+
+**List response envelope** — returned by `ant beta:files list`:
+
+```json
+{
+  "data": [],
+  "first_id": "file_...",
+  "last_id": "file_...",
+  "has_more": false
+}
+```
+
+`data` is an array of `FileMetadata`. Use `last_id` as a cursor for the next page when `has_more` is true.
+
 ## Rules
 
 - Return 1-2 sentence summaries to lead-0
