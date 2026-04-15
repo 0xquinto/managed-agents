@@ -1,0 +1,11 @@
+flowchart LR
+  BO[Business Owner] -->|drops contract files| C[Coordinator]
+  C -->|contract + files| I[Ingestion]
+  I -->|normalized data + manifest| C
+  C -->|normalized data| T[Transversal Modeler]
+  T -->|model skeleton| C
+  C -->|model + industry hint| B[Bespoke Modeler]
+  B -->|tailored model| C
+  C -->|completed model| S[Synthesis]
+  S -->|strategic deck + insights| C
+  C -->|model.xlsx + deck.pptx| BO
