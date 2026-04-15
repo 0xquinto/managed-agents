@@ -1,7 +1,7 @@
 # docs-auditor API extension — design
 
 **Date:** 2026-04-15
-**Status:** Phase 1 implemented (schema mode) — 2026-04-15; Phases 2 and 3 pending
+**Status:** implemented — 2026-04-15 (all three phases)
 **Supersedes partially:** 2026-04-15-docs-auditor-design.md (extends, does not replace)
 
 ## Goal
