@@ -103,7 +103,7 @@ OPTIONS:
 
 ### Create an environment
 
-POST /v1/environments. The `name` must be unique within the organization and workspace.
+POST /v1/environments.
 
 CLI:
 ```bash
@@ -168,7 +168,7 @@ Limited networking example:
 ```
 
 When using `limited`:
-- `allowed_hosts` must be HTTPS-prefixed
+- `allowed_hosts` is a list of domains the container can reach
 - `allow_mcp_servers` permits MCP server endpoints (default false)
 - `allow_package_managers` permits public registries (default false)
 
