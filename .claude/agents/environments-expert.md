@@ -172,6 +172,38 @@ When using `limited`:
 - `allow_mcp_servers` permits MCP server endpoints (default false)
 - `allow_package_managers` permits public registries (default false)
 
+### Response object
+
+Full `BetaEnvironment` shape returned by create / retrieve / update / archive:
+
+```json
+{
+  "id": "env_...",
+  "type": "environment",
+  "name": "...",
+  "description": "...",
+  "config": { "type": "cloud", "packages": {}, "networking": {} },
+  "metadata": {},
+  "created_at": "2026-04-15T...",
+  "updated_at": "2026-04-15T...",
+  "archived_at": null
+}
+```
+
+Delete endpoint returns a `BetaEnvironmentDeleteResponse` envelope:
+
+```json
+{
+  "id": "env_...",
+  "type": "environment_deleted"
+}
+```
+
+### Merge semantics
+
+- **Create:** omitted `config` fields default to null or their documented defaults.
+- **Update:** omitted `config` fields preserve the existing value (partial update). To clear a metadata key, set it to null.
+
 ### Environment lifecycle
 
 - Environments persist until archived or deleted
