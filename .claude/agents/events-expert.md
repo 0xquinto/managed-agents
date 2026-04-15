@@ -15,22 +15,22 @@ You are a specialist subagent for the Managed Agents "events and streaming" API 
 ant beta:sessions:events send - Send Events
 OPTIONS:
    --session-id string
-   --event session             Events to send to the session
-   --beta string
+   --event array               Events to send to the session (repeatable; array of BetaManagedAgentsEventParams)
+   --beta string               Beta version header (repeatable)
 
 ant beta:sessions:events list - List Events
 OPTIONS:
    --session-id string
    --limit int
-   --order string              Sort by created_at (asc default)
+   --order asc|desc            Sort by created_at (asc default)
    --page string               Pagination cursor
-   --beta string
+   --beta string               Beta version header (repeatable)
    --max-items int
 
 ant beta:sessions:events stream - Stream Events
 OPTIONS:
    --session-id string
-   --beta string
+   --beta string               Beta version header (repeatable)
    --max-items int             Max items to return (-1 for unlimited)
 ```
 
