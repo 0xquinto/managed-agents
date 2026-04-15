@@ -78,6 +78,11 @@ Define custom tools on the agent. Your application executes them and sends resul
 }
 ```
 
+Constraints (per upstream schema):
+- `name`: 1-128 characters, regex `[a-zA-Z0-9_-]+` (letters, digits, underscores, hyphens).
+- `description`: 1-1024 characters.
+- `input_schema`: JSON Schema with `type: "object"`; `properties` and `required` are optional.
+
 Best practices for custom tools:
 - Provide extremely detailed descriptions (3-4+ sentences)
 - Consolidate related operations into fewer tools with action parameter
@@ -136,6 +141,25 @@ MCP toolset defaults to `always_ask` permission policy.
   }
 }
 ```
+
+#### Override individual MCP tool policy:
+```json
+{
+  "type": "mcp_toolset",
+  "mcp_server_name": "github",
+  "default_config": {
+    "permission_policy": {"type": "always_allow"}
+  },
+  "configs": [
+    {
+      "name": "delete_repository",
+      "permission_policy": {"type": "always_ask"}
+    }
+  ]
+}
+```
+
+The `name` in each `configs` entry must match an MCP tool exposed by the named server. Use this to auto-approve most tools and gate destructive ones.
 
 ### Tool confirmation flow
 
