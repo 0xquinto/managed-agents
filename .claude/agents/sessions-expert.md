@@ -127,7 +127,15 @@ ant beta:sessions create \
   "resources": [],
   "vault_ids": [],
   "stats": { "active_seconds": null, "duration_seconds": null },
-  "usage": { "input_tokens": 0, "output_tokens": 0 },
+  "usage": {
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 0,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "cache_read_input_tokens": 0
+  },
   "created_at": "...",
   "updated_at": "...",
   "archived_at": null,
