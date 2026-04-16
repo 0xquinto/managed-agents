@@ -415,26 +415,116 @@ The strategist reads the model (which never leaves the container), populates the
 
 ## 11. Your workflow as the Business Owner
 
-_To be drafted in Task 20._
+Your day-to-day with the pipeline is intentionally small. Three steps.
+
+**Step 1 — Drop the files.** When a new contract arrives, you place its input files in the designated shared folder for that contract. Whatever the client sent, in whatever format — PDFs, Excel workbooks, CSVs, Word narratives. You do not rename, reformat, or pre-classify anything. That work belongs to the intake clerk.
+
+**Step 2 — Receive the envelope.** Roughly three hours later (less if the contract is simple, more if the industry specialist has to research an unfamiliar sector), the pipeline returns a single envelope to you. Most commonly it contains the completed workbook, the strategic deck, and a list of key insights. Occasionally it returns `blocked_on_client` with a specific gap named — a missing reporting period, an unreadable scanned PDF, a balance sheet that cannot be parsed — and you decide whether to chase the client or proceed with explicit caveats.
+
+**Step 3 — Review and forward.** You open the workbook and the deck, verify the Executive Summary slide reads as something you would say to the client's board, sign off, and forward to the client. Nothing is ever sent to the client by the pipeline. You are the final gate.
+
+That is the entire interaction model. No dashboards to monitor, no infrastructure to tend, no queue to manage. Files in, envelope out, your review, done.
 
 ## 12. What we need from you
 
-_To be drafted in Task 21._
+Three things, in decreasing order of frequency.
+
+**Per contract: the input files, dropped promptly.** The pipeline is only as fast as your intake cadence. Once the files are in the shared folder, the run starts within minutes and finishes within hours. If the files trickle in over a week, the three-day lead time becomes a week-plus lead time — not because of the pipeline but because of the intake slack. We suggest a rule: when a client delivers files, they enter the folder that same day.
+
+**On a blocked envelope: a clarification decision within 48 hours.** When the intake clerk flags missing data, the pipeline halts and returns a `blocked_on_client` envelope. That envelope is only useful if the information gap gets resolved. We suggest a soft service level on your side: when you receive a blocked envelope, you either chase the client or decide to proceed with caveats within two business days. Longer pauses stack up and re-create the old pipeline's backlog problem inside the new pipeline.
+
+**At delivery: sign-off before forwarding.** Nothing is ever auto-sent to the client. Every deliverable passes through your review first. That is your professional brand, not ours — but the pipeline only works if the sign-off step actually happens rather than being skipped under time pressure. We recommend reserving a thirty-minute review slot per contract in your calendar.
+
+Beyond these three cadences, the pipeline is self-sufficient. It does not need tending, re-training, or supervision.
 
 ## 13. v2 roadmap
 
-_To be drafted in Task 22._
+The gaps from Section 10 are not structural. Each has a planned v2 feature designed to close it. These are not speculative; they are already scoped and sized. The list below is ordered by impact, not implementation order.
+
+### Microsoft Teams and OneDrive automatic intake
+
+The pipeline reads contract files directly from the Teams channels and OneDrive folders you already use, through Microsoft's enterprise credential vault. Files arriving in the intake channel trigger a run automatically. Credentials never leave Microsoft's vault; the pipeline never sees your passwords or tokens.
+
+*Eliminates*: the manual file-drop step and the intake latency that currently caps total lead time.
+
+### PowerBI dashboard refresh from synthesis output
+
+The strategist pushes selected metrics — the same numbers that anchor its deck insights — into a live PowerBI dataset after each run. Partner views refresh automatically; recurring monthly dashboards become a by-product of the pipeline rather than a separate manual export.
+
+*Eliminates*: the recurring "generate PowerBI views for partners" task that currently sits outside the pipeline.
+
+### Industry playbook library
+
+A curated library of per-sector playbooks — financial services, logistics, retail, SaaS, agribusiness, infrastructure, and others — replaces the web-research fallback path the industry specialist uses today when no playbook exists. Each playbook contains vetted benchmarks, required line items, and comparable-multiple conventions.
+
+*Eliminates*: most of the industry specialist's web-search rounds, speeding the bespoke layer and tightening its cost profile.
+
+### Cross-contract memory
+
+A structured memory of prior runs, indexed by sector and client type. When the industry specialist encounters a new microfinance contract, it leverages findings from prior microfinance engagements (benchmarks, common data-quality pitfalls, sector-specific assumptions that worked) rather than starting from zero. Entries decay on a time-based policy so stale data does not leak forward.
+
+*Eliminates*: the "every contract starts from nothing" inefficiency, accelerating second-and-beyond contracts in any given sector.
+
+### Multi-contract batch mode
+
+The pipeline processes multiple contracts in parallel rather than sequentially. If three contracts arrive in the same morning, they complete that same day rather than over three.
+
+*Eliminates*: the one-contract-at-a-time queueing behavior of v1.
+
+### Outcome-validation rubrics
+
+A rubric-graded self-check runs on every deliverable before it reaches you: the model is graded against structural correctness and analytical completeness; the deck is graded against the Executive Summary quality bar (does it answer "what matters and what to do"?). Runs that fail the rubric are flagged with a specific diagnosis rather than shipped.
+
+*Eliminates*: the case — rare but unpleasant — where a run passes all mechanical checks but produces a deliverable that is thin on insight. Your review remains the final gate; the rubric is an additional early filter.
+
+### Ordering
+
+No public commitment to a sequence yet. Teams and OneDrive intake and cross-contract memory are the two v2 features with the largest single-contract time impact; outcome rubrics are the cheapest to add; batch mode has the highest engineering cost. Expect an incremental rollout.
 
 # Appendix — Technical reference
 
 ## A1. Agents
 
-_To be drafted in Task 23._
+Technical reference for readers who want the exact provisioning details behind each agent. Not required reading for the Business Owner; included for anyone on the Insignia side who will engage with Anthropic's platform documentation directly.
+
+| Agent | Internal name | Model ID | Tools enabled | Skills | MCP servers (v1) |
+|---|---|---|---|---|---|
+| Coordinator | `insignia_coordinator` | `claude-sonnet-4-6` | read, write | — | — |
+| Ingestion | `insignia_ingestion` | `claude-sonnet-4-6` | bash, read, write, edit | `pdf`, `xlsx`, `docx` | — |
+| Transversal modeler | `insignia_transversal_modeler` | `claude-opus-4-6` | bash, read, write, edit | `xlsx` | — |
+| Bespoke modeler | `insignia_bespoke_modeler` | `claude-opus-4-6` | bash, read, write, edit, web_search, web_fetch | `pdf`, `xlsx` | — |
+| Synthesis | `insignia_synthesis` | `claude-opus-4-6` | bash, read, write, edit, web_search | `xlsx`, `pptx` | — |
+
+All tools use Anthropic's `always_allow` permission policy for v1 (the pipeline is fully automated; no mid-run confirmation prompts). MCP servers are empty in v1 — Microsoft Graph and PowerBI integrations are deferred to v2 alongside vault-mediated credential provisioning.
+
+Multi-agent wiring: the coordinator's `callable_agents` list contains the four workers in order — `insignia_ingestion`, `insignia_transversal_modeler`, `insignia_bespoke_modeler`, `insignia_synthesis`. Workers cannot invoke other agents; platform-level recursion is limited to one level of delegation.
 
 ## A2. File paths and environment
 
-_To be drafted in Task 23._
+Per-session mount layout used by the pipeline:
+
+| Mount | Purpose | Access |
+|---|---|---|
+| `/mnt/session/input/<contract_id>/` | Client-provided input files | Read-only |
+| `/mnt/session/out/<contract_id>/` | Normalized data, workbook, deck, logs, assumption notes | Read/write |
+| `/mnt/session/templates/` | Transversal workbook skeleton, deck skeleton | Read-only |
+| `/mnt/session/playbooks/` | Industry playbooks (v1 ships `generic.md` only) | Read-only |
+
+Environment packages pre-staged in the shared container image:
+
+- System packages (apt): `poppler-utils`
+- Python packages (pip): `pandas`, `numpy`, `openpyxl`, `xlsxwriter`, `pdfplumber`, `pymupdf`, `python-pptx`, `python-docx`, `requests`
+
+Networking posture: unrestricted outbound (required because the bespoke modeler and the strategist issue web_search queries against arbitrary industry sources). Anthropic's safety blocklist still applies. No inbound network access.
+
+Session lifecycle: each contract runs in an isolated container instance; containers are destroyed at session termination; no state persists across sessions on the environment filesystem.
 
 ## A3. Further reading
 
-_To be drafted in Task 23._
+- Anthropic pricing (public): https://www.anthropic.com/pricing
+- Claude Managed Agents overview and pricing: https://platform.claude.com/docs/en/about-claude/pricing
+- Claude Managed Agents beta API reference (the `managed-agents-2026-04-01` beta header): https://docs.anthropic.com
+- Model card — `claude-opus-4-6`: https://www.anthropic.com/claude
+- Model card — `claude-sonnet-4-6`: https://www.anthropic.com/claude
+
+The diagnostic this SOP is built on: `docs/contracts/Insignia/diagnostics/insignia_diagnostics.md` (internal).
