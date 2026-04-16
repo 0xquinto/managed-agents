@@ -230,19 +230,186 @@ The coordinator has no outbound internet access. It reads the inputs you provide
 
 ## Ingestion — the intake clerk
 
-_To be drafted in Task 16._
+The intake clerk is the first specialist to see the contract's files. Its job is the work you currently spend four days on: taking whatever the client sent — PDF financial statements, Excel workbooks, CSV portfolios, the occasional Word narrative — and turning it into a clean, model-ready dataset. It classifies each file, extracts the structured data, normalizes it into canonical form, and flags anything missing or suspicious.
+
+### What it reads and what it delivers
+
+**Reads:** every file you drop for the contract, in whatever format the client sent it.
+
+**Delivers:** a normalized dataset organized into three canonical CSVs (P&L, Balance Sheet, Cash Flow), an entity metadata file, a narrative-assumptions file, and a manifest that catalogs every input, every extraction, and every quality flag. The manifest is what downstream agents read; the underlying raw files are never touched again.
+
+### How it thinks
+
+For each file it tries to determine: *what is this?* (financial statement, identifier document, risk classification, market research, something else), *how confident am I?*, and *can I extract the structured content reliably?* For PDFs it prefers a direct text extraction; if the PDF is scanned or image-only, it falls back to a more aggressive extraction method and flags the situation. For Excel workbooks it reads every sheet. For CSVs it reads directly. For anything it cannot confidently classify or extract, it flags the file rather than guessing.
+
+The crucial discipline is that the intake clerk never invents data. If a required field is missing — a reporting period, a balance-sheet side, a line item — it says so and halts the pipeline rather than fabricating defaults. This is how the diagnostic's "broken files, manual outreach" pain point is eliminated: you still do the outreach when needed, but only when the pipeline has identified a specific, named gap.
+
+### What's under the hood
+
+- **Model:** Sonnet. Classification and normalization need judgment but not deep analytical reasoning; Sonnet is fast and cost-effective for this workload.
+- **Tools:** bash, read, write, edit. Bash lets it invoke specialized libraries when the standard skills are not enough (for example, to run an OCR fallback on a scanned PDF).
+- **Skills:** PDF reader, Excel reader, Word reader. Three specialized capabilities, one per common file format.
+
+### Determinism
+
+Near-deterministic. Given the same input files, the intake clerk classifies them the same way, extracts the same text, and produces the same normalized CSVs. The only source of variation is the small-scale judgment on ambiguous files — which is always surfaced in the manifest's confidence scores, never hidden.
+
+### Security posture
+
+No outbound internet access. The intake clerk reads what you mounted into the run container and writes the normalized output to the same container's session directory. Nothing leaves.
+
+### Failure modes
+
+- **Missing required fields** — returns a `blocked` status with the specific gaps named. The coordinator surfaces this to you as `blocked_on_client`.
+- **Scanned or image-only PDF** — tries a direct extraction, detects that almost no text came out (less than fifty characters per page on average), and falls back to a layout-aware extraction. If that still yields nothing, it flags the file as unreadable and halts.
+- **Unbalanced or inconsistent source data** — raises a quality flag in the manifest with severity; the coordinator decides whether to proceed or halt based on severity.
+- **Ambiguous file type** — classifies with low confidence and flags it; does not proceed on files it could not confidently categorize.
+
+### What you can verify after a run
+
+- `manifest.json` — the full catalog: files read, types assigned, confidence scores, quality flags, missing fields.
+- `classification.json` — the per-file log of which extraction method succeeded and any fallbacks that fired.
+- The `normalized/` directory — three CSVs and an entity file you can open in Excel to verify the pipeline saw the client's numbers correctly.
 
 ## Transversal modeler — the standard modeler
 
-_To be drafted in Task 17._
+The standard modeler builds the financial core that is identical across every client you serve: Income Statement, Balance Sheet, Cash Flow, and Valuation. This is the work the diagnostic identifies as the transversal layer — the same structure applied contract after contract, differing only in the numbers that plug into it. Automating this layer is the single largest time recovery in the pipeline.
+
+### What it reads and what it delivers
+
+**Reads:** the normalized dataset produced by the intake clerk (three canonical CSVs, the entity file, the assumptions narrative) and the pipeline's Excel template (a structured skeleton with the four core sheets, pre-built formulas, and reserved placeholders for the industry specialist's overlay).
+
+**Delivers:** a populated `model.xlsx` workbook with the four core sheets filled in, every subtotal as a live formula, a self-validation cell per sheet returning `OK` or `UNBALANCED`, and an `Assumptions` sheet listing any default values it had to fill in when the source data was incomplete.
+
+### How it thinks
+
+The standard modeler never rebuilds the financial core from scratch. It opens the template workbook and fills it in, preserving the cell addresses, named ranges, and cross-sheet formula references that the industry specialist depends on downstream. This is a discipline with a specific reason: if the template's structure shifts, the industry specialist's carefully placed overlay breaks silently. The standard modeler is therefore a populator, not a rebuilder.
+
+Every computed cell — gross profit, EBITDA, operating cash flow, every subtotal — is a live Excel formula, not a hard-coded number. You can click any cell and see the formula that produced it. Hard-coded numbers appear only in input cells where the client's reported historicals live.
+
+When the source data is missing a piece the model needs (for example, cost of debt for the interest expense line), the standard modeler does not guess. It inserts a formula that references a cell on the `Assumptions` sheet and flags that row with a visible `TODO(bespoke)` marker. The industry specialist later fills the real number; if it cannot, that assumption is surfaced to you.
+
+### What's under the hood
+
+- **Model:** Opus. Building a structurally correct, internally consistent four-statement model requires deep analytical reasoning — balance sheet must balance, cash flow must tie out, DCF must use sensible terminal-value mechanics. This is the work you would not delegate to a junior analyst on their first day; it runs on Opus.
+- **Tools:** bash, read, write, edit. Bash is used to run the Excel-editing library that preserves named ranges and formula links reliably — the Excel skill by itself can silently drop those structures on save.
+- **Skills:** Excel reader (used for inspection only; writes go through the more careful bash path).
+
+### Determinism
+
+Deterministic math, light judgment on assumption defaults. Given the same normalized inputs and the same template, the standard modeler produces the same P&L, Balance Sheet, Cash Flow, and Valuation — same cell addresses, same formulas, same validation outcomes. The only variation is the default-value choice for any missing inputs, and those are always surfaced with a `TODO(bespoke)` marker so nothing is hidden.
+
+### Security posture
+
+No outbound internet access. The standard modeler reads the normalized dataset and the template, writes the workbook, and runs its internal validation. It neither reaches the internet nor leaves the container.
+
+### Failure modes
+
+- **Balance sheet does not balance** — the validation cell returns `UNBALANCED` with the exact delta. If the delta exceeds one cent of the reporting unit, the standard modeler returns a `failed` status rather than shipping a broken model.
+- **Cash flow does not tie to the balance sheet** — same outcome: failure rather than silent delivery.
+- **Template missing or corrupted** — fails early with a clear error; does not attempt to rebuild from scratch (the industry specialist's contract with the template depends on it being preserved exactly).
+
+### What you can verify after a run
+
+- The workbook itself. Click any computed cell; you see the formula. Check the validation cells on each sheet; they read `OK` if the internal math is consistent.
+- The `Assumptions` sheet. Any row marked `TODO(bespoke)` is a default the standard modeler inserted because the source data did not provide it — these are the places the industry specialist will later refine.
 
 ## Bespoke modeler — the industry specialist
 
-_To be drafted in Task 18._
+The industry specialist tailors the standard model to the client's specific sector. Its job is the bespoke layer the diagnostic describes: sector-appropriate line items that do not exist in the transversal core, benchmark assumptions drawn from industry research, valuation multiples calibrated to the right comparables. It is the step where a generic financial skeleton becomes a model that speaks to the client's actual business.
+
+### What it reads and what it delivers
+
+**Reads:** the populated workbook from the standard modeler, the client's narrative assumptions, the client name, and an optional industry hint from you (for example, "microfinance" or "logistics"). It may also consult an industry playbook — a pre-researched reference document containing sector benchmarks and line-item conventions — when one exists for the client's sector.
+
+**Delivers:** the same workbook, now updated with industry-specific line items in the reserved bespoke blocks, a populated `industry_benchmarks` section with five most-relevant KPIs, a populated `bespoke_assumptions` section with WACC and terminal growth, a comparable-multiples list, and an `assumption_notes.md` file citing the source of every number it injected.
+
+### How it thinks
+
+The industry specialist first confirms the sector. It uses the industry hint if you provided one; otherwise it infers from the client name, the narrative assumptions, and the pattern of the P&L itself. If uncertain, it uses web search to resolve the classification and records its reasoning in a classification note.
+
+It then consults a local industry playbook when one exists. If a playbook applies — say, a logistics playbook or a SaaS playbook — it is the authoritative source: sector benchmarks, required line items, comparable-multiple conventions. When no playbook exists (microfinance, for instance, in v1), the specialist falls back to public web research. Every figure it pulls from the web is cited with a source URL, and every assumption it injects is logged in `assumption_notes.md` with provenance.
+
+Crucially, the industry specialist never rewrites the standard modeler's core. It adds into reserved blocks and fills pre-designated named ranges. If the client's actual P&L contradicts the playbook (service revenue where the playbook expected product revenue), the specialist trusts the client's data and notes the discrepancy rather than forcing the playbook shape.
+
+### What's under the hood
+
+- **Model:** Opus. Industry classification, benchmark selection from conflicting public sources, and judicious assumption-setting require strong analytical reasoning. Opus is the model that behaves most like the senior analyst you would otherwise assign this work to.
+- **Tools:** bash, read, write, edit, web search, web fetch. The two web tools are what let it retrieve public benchmarks when a playbook is unavailable; every retrieval is logged.
+- **Skills:** Excel reader (for inspection), PDF reader (reserved for v2 when the specialist may re-read source documents for narrative risk sections; unused in v1).
+
+### Determinism
+
+Judgment within guardrails. Two runs on the same client may pick different but equally valid sources when published benchmarks disagree — if one industry report says microfinance WACC is fourteen percent and another says sixteen, the specialist may land on either number on different runs, and it will cite whichever source it used. The guardrail is that it cites every number and flags every range it picked a midpoint within.
+
+### Security posture
+
+This is one of two agents with outbound internet access (the other is the strategist). Web search queries are about public industry information — sector benchmarks, comparable companies, published research. Nothing about your client or your client's data is sent outward as part of these searches. The specialist searches *for* information; it does not share yours. Every search and every fetched URL is logged.
+
+### Failure modes
+
+- **No playbook and web search fails or returns nothing useful** — the specialist flags the missing assumption in `assumption_notes.md` and inserts a conservative placeholder rather than inventing a number. You see the gap explicitly.
+- **Playbook contradicts the client's data** — trusts the client, notes the discrepancy, proceeds.
+- **Validation regression** — after adding the bespoke layer, the specialist re-runs the workbook's balance and cash-flow checks. If either regressed from `OK` to `UNBALANCED`, it fixes or reverts rather than shipping a broken model.
+
+### What you can verify after a run
+
+- `assumption_notes.md` — every assumption the specialist added, with its source (a playbook path or a URL).
+- `industry_classification.md` — the sector call and the evidence behind it.
+- The updated workbook itself. The standard modeler's core sheets still read `OK` on their validation cells; the new bespoke rows are clearly labeled; every number traces back to either the input data or the notes file.
 
 ## Synthesis — the strategist
 
-_To be drafted in Task 19._
+The strategist is the agent the diagnostic flags as the biggest unsolved pain point: the step where a completed financial model becomes a strategic slide deck that answers the question your client's board actually cares about. "What are the three-to-five things we need to know?" The diagnostic calls this the transition from *Janitorial AI* (fixing typos) to *Architectural AI* (driving insights). The strategist is where that transition happens.
+
+### What it reads and what it delivers
+
+**Reads:** the completed workbook (transversal core plus bespoke overlay), the client name, and the strategic deck template — a seven-slide skeleton with placeholder titles and brand-consistent layout.
+
+**Delivers:** a populated `deck.pptx` containing the finished strategic deck, plus a structured list of the key insights it selected, each one tied to a specific cell in the model with a one-line "so what."
+
+### How it thinks
+
+The strategist refuses to narrate the model. Narrating the model is what junior analysts do — walk through every sheet, restate every number. The board does not need narration. It needs distillation.
+
+The strategist starts by computing the answers to four framing questions:
+
+- **Performance** — how is the business doing against its own history and against sector benchmarks?
+- **Health** — balance-sheet resilience: leverage, liquidity, working-capital cycle.
+- **Trajectory** — what does the forecast say, and what assumption is it most sensitive to?
+- **Value** — what does the DCF plus comparables imply, and what is the range?
+
+From the answers, it ranks candidate insights and keeps three to five. An insight must meet three tests: (1) a specific number supports it, (2) there is a clear "so what," and (3) a board member would actually discuss it. Everything that fails any of those three tests is dropped, not softened.
+
+The deck itself is built by loading the template and populating each slide. The Executive Summary slide (slide two) is the quality bar: if the Business Owner — or the Business Owner's client — reads only that slide, they should know what matters and what to do about it.
+
+When the DCF is sensitive — meaning a two-percent shift in WACC changes valuation by more than twenty-five percent — the strategist says so on the Value slide. Fragility is an insight, not a flaw to hide.
+
+### What's under the hood
+
+- **Model:** Opus. Strategic judgment is the deliverable here. Ranking candidate insights, choosing what to drop, writing crisp board-level framings — this is the work that most benefits from Anthropic's most capable model.
+- **Tools:** bash, read, write, edit, web search. Bash runs the slide-generation library (the built-in deck skill cannot load an existing template and fill in placeholders; that requires direct programmatic control). Web search is available for public market context when framing an insight.
+- **Skills:** Excel reader (for extracting KPIs from the finished model), deck reader (reserved for future use inspecting completed decks).
+
+### Determinism
+
+Judgment — and this is the point. Two runs on the same model may select slightly different insight sets and may frame them differently. This is not a defect. The strategist is the advisor in the team, and an advisor who says the exact same thing every time is a template, not an advisor. What is deterministic is the grounding: every insight cites a specific cell, a specific number, and a specific "so what." Nothing is ever unfalsifiable. You can disagree with the framing; you can always trace the number.
+
+### Security posture
+
+The strategist reads the model (which never leaves the container), populates the deck, and occasionally searches the public web for market context to frame an insight. As with the industry specialist, nothing about your client's data is sent outward during search queries, and every web source is cited in the deck's speaker notes.
+
+### Failure modes
+
+- **Cannot compute the framing answers** — for example, if the workbook fails a validation check mid-read, the strategist aborts rather than producing a deck on a broken model.
+- **Cannot identify three board-worthy insights** — surfaces the problem explicitly rather than padding with weak content. This is rare; when it happens, it is usually because the underlying data is too incomplete to support strategic commentary.
+- **Template missing** — fails clearly.
+
+### What you can verify after a run
+
+- The deck itself. Open `deck.pptx`, read the Executive Summary slide. That is the test: does it answer "what matters and what to do about it?"
+- The insights list returned in the envelope — three to five items, each with a headline, a number, the source cell in the model, and a one-line "so what."
+- Speaker notes on every slide — every web-sourced figure is cited there with the URL.
 
 # Part III — Working together
 
