@@ -119,11 +119,73 @@ These are not artifacts you must read on every run. They exist so that when a qu
 
 ## 9. Running cost estimate
 
-_To be drafted in Task 13._
+This section estimates what running the pipeline against Anthropic's infrastructure will cost you per contract and per year. It is *not* our fee — it is the pass-through cost of the underlying service.
+
+The pipeline bills on three dimensions: tokens consumed by the five specialists, session runtime (metered only while a run is actively computing), and a small fee per web search (used by the industry specialist). Anthropic publishes all three rates; they are quoted below.
+
+### Per-contract breakdown (estimated, based on the Tafi contract)
+
+| Line item | Estimated cost |
+|---|---:|
+| Token usage — five agents combined (~918K input + 54K output across 142 turns) | $5.67 |
+| Session runtime (~3 active hours at $0.08/hour) | $0.24 |
+| Web search (~10 industry-benchmark queries at $10 per thousand) | $0.10 |
+| **Total per contract** | **~$6.00** |
+
+The expensive component is token usage, and within that the three modeling agents (standard modeler, industry specialist, strategist) account for roughly ninety-three percent of the token bill because they run on Opus — Anthropic's most capable model — and they run for the most turns. The intake clerk and project manager run on Sonnet and are collectively under fifty cents per contract.
+
+### Annual projection
+
+Using $6 per contract as the unit cost, annual API spend scales linearly with throughput:
+
+| Annual contracts | Scenario | Annual API cost |
+|---:|---|---:|
+| 25 | Current baseline | ~$150 |
+| 35 | Cleared queue, near-term | ~$210 |
+| 50 | Doubled capacity | ~$300 |
+| 75 | Full 3× target | ~$450 |
+
+For context: at current manual workflow rates, the pipeline replaces between one hundred and two hundred forty business days per year of the Business Owner's time (see the diagnostic for the labor breakdown). The API cost at any realistic throughput is a small fraction of the labor it substitutes for.
+
+### Methodology and honest caveats
+
+What was measured directly:
+- Anthropic's published rates, pulled on 2026-04-16 from the pricing page and platform documentation: Opus input $5 / output $25 per million tokens, Sonnet input $3 / output $15 per million tokens, session runtime $0.08 per active hour, web search $10 per thousand queries.
+- The five agents' system prompt sizes (5,655 tokens combined), the Tafi PDF full-text extraction size (15,961 tokens), and the Tafi portfolio CSV summary size (2,718 tokens). Measured via Anthropic's `count_tokens` endpoint and local extraction runs.
+
+What remains estimated:
+- Turn counts per agent (~10 to ~45 depending on complexity).
+- Accumulated history growth across a long run.
+- Average output tokens per turn.
+- Size of a web search result bundle.
+
+The pre-measurement estimate had a ±30–50% uncertainty band. After measurement the band tightens to roughly ±15–25%. The remaining uncertainty is resolved only by a live run — which is why the first real Tafi contract should be instrumented to capture actuals and replace these projections.
+
+### Optimization already on deck
+
+Anthropic's prompt-caching feature, when enabled, reduces cache-read input tokens to $0.50 per million on Opus and $0.30 per million on Sonnet — a tenth of the standard rate. Because the five system prompts are static across every run, caching them is essentially free engineering work and should reduce per-contract cost by roughly ten to fifteen percent. It will be enabled before the first production run.
+
+### Disclaimer
+
+Claude Managed Agents is generally available but the rates above were pulled at a point in time and may change. Volume discounts above certain thresholds are available through enterprise sales; the projection above assumes list rates. Nothing in this section is a quote — it is a planning estimate meant to give you order of magnitude. The first live contract will produce measured numbers that replace it.
 
 ## 10. v1 limits
 
-_To be drafted in Task 14._
+This is the honest list of what the pipeline does *not* do yet. Framing matters: each of these is a deliberate v1 boundary, and each has a specific v2 successor that closes the gap. Section 13 describes the v2 roadmap in full.
+
+**File intake is manual.** Today you drop the contract's files into a shared folder; the pipeline picks them up from there. There is no automatic pull from Teams, OneDrive, or email. This preserves the current human step where you decide what goes in — which also means the four-day manual classification window from the diagnostic is not eliminated yet, only reduced to however long it takes you to drop the files. *v2 adds*: direct, credential-safe reads from your Teams channels and OneDrive folders.
+
+**PowerBI dashboards are not yet refreshed automatically.** The strategist produces the deck and the model; it does not yet push key metrics into a live partner-facing dashboard. Recurring Power BI views remain a manual export step. *v2 adds*: authenticated PowerBI dataset refresh from the strategist's output.
+
+**Each contract starts from zero.** The pipeline has no memory across contracts. If the industry specialist researches microfinance sector benchmarks on Contract A, those exact findings are not automatically reused on Contract B in the same sector — the search runs again. Every run is an isolated engagement. *v2 adds*: a cross-contract memory store that caches sector findings, client-context notes, and prior-run lessons, keyed by industry and invalidated when stale.
+
+**One contract at a time.** If two contracts arrive simultaneously, the second waits for the first to finish. A single run takes approximately three hours of compute; two serial runs take six. *v2 adds*: multi-contract batch mode with session-level parallelism.
+
+**Quality gate is your review, not an automatic rubric.** The pipeline's internal quality controls (balance checks, source-cited assumptions, formula-only cells) catch mechanical errors, but they do not grade the deliverable against a strategic-quality rubric. Insights are number-backed but not automatically scored for board-worthiness. *v2 adds*: a rubric-graded self-check on model quality and deck quality before hand-off.
+
+**Industry playbooks are minimal.** v1 ships a single generic fallback playbook. When a sector has no dedicated playbook (microfinance, for instance), the industry specialist falls back to public web sources — slower, sometimes less precise, and more expensive per contract due to the search volume. *v2 adds*: a curated library of per-sector playbooks (financial services, logistics, retail, SaaS, agribusiness, infrastructure) that eliminate most web-search rounds and speed up the bespoke layer.
+
+None of these gaps block the pipeline from delivering full value on v1. They are the known edges of what the first version can do, stated plainly so you can plan around them.
 
 # Part II — The agents
 
