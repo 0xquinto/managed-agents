@@ -1,6 +1,27 @@
 # Per-agent token estimates (one Insignia contract)
 
-_Engineering projection pre-smoke-test. Update with actuals after first live run. Based on the Tafi representative contract (2 input files: one scanned PDF financial statement `Borrador de EF 2025 - Financiera Tafi - MICI.pdf`, and one 27MB CSV `Cartera Total TAFI.csv`)._
+_Engineering projection. Input-side components (system prompts, PDF extraction size, CSV summary size) have been measured directly via the Anthropic `count_tokens` API and local pdfplumber/pandas runs on the real Tafi inputs on 2026-04-16. Turn counts and per-turn output tokens remain projections — update with actuals after first live run. Based on the Tafi representative contract (2 input files: `Borrador de EF 2025 - Financiera Tafi - MICI.pdf` — **measured non-scanned**, 39 pages, 1,117 chars/page extracted cleanly via pdfplumber — and one 27MB CSV `Cartera Total TAFI.csv`, 156,309 rows × 24 cols)._
+
+## Measured inputs (2026-04-16)
+
+| Component | Measured tokens |
+|---|---:|
+| System prompt — coordinator | 721 |
+| System prompt — ingestion | 1,207 |
+| System prompt — transversal_modeler | 1,199 |
+| System prompt — bespoke_modeler | 1,263 |
+| System prompt — synthesis | 1,265 |
+| **Total system prompts** | **5,655** |
+| Tafi PDF full text extraction (pdfplumber, 39 pages) | 15,961 |
+| Tafi CSV pandas summary (info + head(10) + describe) | 2,718 |
+| Web search result per query (**still estimate, not measured**) | ~1,500 |
+
+**Key revisions vs. pre-measurement projection:**
+
+1. System prompt sizes are ~82% larger than the `words × 1.3` approximation (5,655 measured vs ~3,100 projected). Accumulated across ~145 total turns, this is a modest per-contract input-cost bump.
+2. **The Tafi PDF is not scanned** — pdfplumber extracts cleanly. The fallback chain (pymupdf OCR) will not fire on this file. Ingestion turn count adjusts from ~15 down to ~12.
+3. PDF extraction is larger than the scanned-OCR estimate assumed: 15,961 tok vs. 3,000 tok. This is input that ingestion holds in context and that flows (in distilled form) to downstream agents via normalized CSVs.
+4. Web search per-query size remains a 1,500-tok estimate — not measured, since no live search was run.
 
 ## Methodology
 
@@ -23,24 +44,50 @@ where `avg_turn_size` (assistant message + tool call structure) ≈ 300 tok and 
 
 **Output tokens per turn** are modest: most turns produce a brief tool call or a partial JSON object. Averaged across turns: coordinator ~200, ingestion ~250 (more JSON writing), transversal_modeler ~400 (openpyxl code generation is verbose), bespoke_modeler ~450 (includes inline citations), synthesis ~350 (narrative insight drafting).
 
-## Estimate table
+## Estimate table (revised with measured inputs — 2026-04-16)
 
 | Agent | Model | Turns | Input tokens (total) | Output tokens (total) | Notes |
 |-------|-------|------:|---------------------:|----------------------:|-------|
-| coordinator | claude-sonnet-4-6 | ~10 | ~22,000 | ~2,000 | Router only; short turns, no heavy tool output. Sys prompt ~430 tok; avg input/turn ~2,200. |
-| ingestion | claude-sonnet-4-6 | ~15 | ~75,000 | ~4,000 | Scanned-PDF fallback chain adds 3 extra turns with large skill outputs (~3,000 tok each). CSV extraction produces a pandas summary ~2,000 tok. Avg input/turn ~5,000. |
-| transversal_modeler | claude-opus-4-6 | ~45 | ~270,000 | ~18,000 | openpyxl code blocks are verbose (~400 tok output/turn avg). Tool outputs include sheet previews and formula echoes (~1,200 tok avg). Context grows significantly across 45 turns. Avg input/turn ~6,000. |
-| bespoke_modeler | claude-opus-4-6 | ~45 | ~310,000 | ~20,000 | ~10 web_search turns add ~1,500 tok each to input. No standard microfinance playbook for MICI expected — full web-research path. assumption_notes.md generation is verbose. Avg input/turn ~6,900. |
-| synthesis | claude-opus-4-6 | ~30 | ~165,000 | ~10,500 | openpyxl extraction passes ~3,000 tok of KPI data into context early; python-pptx code generations average ~450 tok output. Avg input/turn ~5,500. |
-| **Total** | | **~145** | **~842,000** | **~54,500** | |
+| coordinator | claude-sonnet-4-6 | ~10 | ~25,000 | ~2,000 | Measured sys prompt 721 tok adds +290/turn over prior estimate. Router only; short turns, no heavy tool output. |
+| ingestion | claude-sonnet-4-6 | ~12 | ~80,000 | ~3,000 | **Tafi PDF is NOT scanned** — fallback chain not needed, saves ~3 turns vs prior estimate. But measured PDF extraction (15,961 tok) is larger than the previous OCR assumption (3K). Net: similar order of magnitude. Measured sys prompt 1,207 tok. |
+| transversal_modeler | claude-opus-4-6 | ~45 | ~295,000 | ~18,000 | Measured sys prompt 1,199 tok adds +559/turn × 45 turns = +25K over prior estimate. openpyxl code blocks verbose. Context grows significantly across 45 turns. |
+| bespoke_modeler | claude-opus-4-6 | ~45 | ~336,000 | ~20,000 | Measured sys prompt 1,263 tok adds +573/turn × 45 turns = +26K. ~10 web_search turns still estimated at 1,500 tok each (not measured). No microfinance playbook exists in v1 — full web-research path. |
+| synthesis | claude-opus-4-6 | ~30 | ~182,000 | ~10,500 | Measured sys prompt 1,265 tok adds +565/turn × 30 turns = +17K. openpyxl + python-pptx code generation. |
+| **Total** | | **~142** | **~918,000** | **~53,500** | Input up ~9% vs prior estimate; output essentially unchanged. |
+
+## Refined cost estimate (2026-04-16, measured inputs)
+
+| Line item | Value |
+|---|---:|
+| Coordinator tokens (Sonnet, $3/$15 per MTok) | $0.105 |
+| Ingestion tokens (Sonnet) | $0.285 |
+| Transversal modeler tokens (Opus, $5/$25 per MTok) | $1.925 |
+| Bespoke modeler tokens (Opus) | $2.180 |
+| Synthesis tokens (Opus) | $1.173 |
+| **Tokens subtotal** | **$5.67** |
+| Session runtime (~3 hr × $0.08) | $0.24 |
+| Web search (~10 queries × $0.01) | $0.10 |
+| **Per contract (revised)** | **~$6.01** |
+
+**Annual projection at candidate volumes:**
+
+| Volume | Context | Annual cost |
+|---|---|---:|
+| 25 | Current baseline (2026) | ~$150 |
+| 35 | Cleared queue (near-term) | ~$210 |
+| 50 | 2× expansion | ~$300 |
+| 75 | Full 3× target | ~$451 |
 
 ## Assumptions and caveats
 
+- **Measured:** All five system prompt sizes, the Tafi PDF full-text extraction size, and the Tafi CSV pandas-summary size — via `anthropic.messages.count_tokens` with `claude-sonnet-4-5` as the tokenizer reference and local pdfplumber/pandas runs.
+- **Still estimated:** Turn counts per agent, per-turn output token averages, web_search result token size (~1,500 per query), accumulated-history growth across turns, session runtime duration.
 - Tool use results (web_search) averaging ~1,500 tokens each. This is conservative for comprehensive microfinance sector searches; actuals could reach 3,000 tok per search if result snippets are long.
-- openpyxl code generation is counted as output tokens (~350–450 per turn). If the model generates longer scripts (e.g. iterating 50+ rows of the portfolio CSV), output could be 2× this estimate.
-- The 27MB CSV (`Cartera Total TAFI.csv`) is never loaded wholesale into context. ingestion reads it via pandas and passes a summary/schema view (~2,000 tok). If the model needs to inspect specific rows during quality checks, additional read turns could add 5–10 turns to ingestion.
-- Context accumulation across 45 turns (transversal_modeler, bespoke_modeler) is the dominant cost driver. A full-context model with no truncation was assumed; if the API applies context windowing, actuals may differ.
-- No prompt caching assumed in this baseline. If system prompts are cached (they are static), input tokens for coordinator and ingestion drop by ~60–80% of system-prompt tokens per turn — a potential saving of ~20,000–40,000 tokens total.
+- openpyxl code generation counted as output tokens (~350–450 per turn). If the model generates longer scripts (e.g. iterating 50+ rows of the portfolio CSV), output could be 2× this estimate.
+- The 27MB CSV is never loaded wholesale into context. Ingestion reads it via pandas and passes a summary view (measured at 2,718 tok). If the model needs to inspect specific rows during quality checks, additional read turns could add 5–10 turns to ingestion.
+- Context accumulation across 45 turns (transversal_modeler, bespoke_modeler) is the dominant cost driver. A full-context model with no truncation was assumed.
+- **No prompt caching assumed** in this baseline. If system prompts are cached (they are static), at 5-minute TTL the effective input rate drops to $0.30/MTok (Sonnet) or $0.50/MTok (Opus) on cache-hit turns — a realistic saving of ~10–15% on total input cost for agents with 30+ turns (transversal, bespoke, synthesis). Worth enabling pre-launch.
 - Sonnet used for coordinator and ingestion; Opus used for the three modeling/synthesis agents — consistent with the design spec. Pricing impact is significant: Opus is ~5× more expensive per token than Sonnet at list rates.
 - The "blocked_on_client" path (coordinator halts after ingestion returns missing_fields) is not modeled here; that would be a ~25-turn partial run, mostly coordinator + ingestion cost only.
-- Numbers are order-of-magnitude estimates accurate to ±30–50%. The first live Tafi run should be instrumented to record actual token usage per session and per agent turn to replace these projections.
+- Uncertainty band: with measured inputs the projection tightens from ±30–50% (pre-measurement) to roughly **±15–25%**. The residual uncertainty is dominated by turn counts and tool output sizes, which only an actual run will resolve.
+- The first live Tafi run should be instrumented to record actual token usage per session and per agent turn, to replace the remaining projected values with measured ones.
