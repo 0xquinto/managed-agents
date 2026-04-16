@@ -191,7 +191,42 @@ None of these gaps block the pipeline from delivering full value on v1. They are
 
 ## Coordinator — the project manager
 
-_To be drafted in Task 15._
+The coordinator is the only agent you interact with directly. Think of it as the project manager of a four-person engagement team: it receives the brief from you, assigns each part of the work to the right specialist, collects their reports, checks that nothing is missing, and hands you the finished deliverables. It does not do modeling work itself — it routes it.
+
+### What it reads and what it delivers
+
+**Reads:** the contract ID, the list of input files you dropped, and the client name.
+
+**Delivers to you:** a single envelope containing the completed financial model (`model.xlsx`), the strategic deck (`deck.pptx`), a list of key insights, and a status — `delivered`, `blocked_on_client`, or `failed`. Plus a timeline log of what happened during the run.
+
+### How it thinks
+
+The coordinator follows a strict sequence: intake first, then standard modeling, then bespoke overlay, then synthesis. Each specialist returns a structured report; the coordinator inspects the status field and decides whether to continue. If the intake clerk flags missing data, the coordinator halts and returns `blocked_on_client` with the specific gaps named — it does not try to substitute defaults or call the next specialist on a bad foundation. If any other specialist fails mid-run, the coordinator short-circuits the sequence and reports `failed` with the upstream error. It never invents outputs to mask a partial run.
+
+### What's under the hood
+
+- **Model:** Sonnet. The coordinator is a router, not a modeler — it needs judgment for orchestration, not deep analytical power. Sonnet is the right cost-performance tradeoff here.
+- **Tools:** read and write only. It has no bash shell, no internet access, no ability to open or modify Excel files. Its only job is routing, and its tools are scoped accordingly.
+- **Skills:** none. Skills are specialized capabilities (PDF reading, Excel editing, slide generation) reserved for the agents that need them.
+
+### Determinism
+
+Highly deterministic. Given the same inputs and the same specialist outputs, the coordinator will route in the same order, apply the same halt conditions, and produce the same final envelope. It is the most predictable agent in the pipeline.
+
+### Security posture
+
+The coordinator has no outbound internet access. It reads the inputs you provided, writes the final envelope, and writes a status log to the session output directory. Nothing it does touches anything outside the active run container.
+
+### Failure modes
+
+- **Intake blocked:** the intake clerk returns a `blocked` status with missing fields. The coordinator passes this straight through to you as `blocked_on_client`. You decide what to do next.
+- **Worker failure:** any specialist returns `failed`. The coordinator short-circuits, surfaces the error, and reports `failed` — no silent retry, no fallback to defaults.
+- **Malformed worker report:** extremely rare, but if a specialist returns a report the coordinator cannot parse, the run fails cleanly rather than proceeding on a misinterpreted envelope.
+
+### What you can verify after a run
+
+- `coordinator.log` — the timeline of specialist dispatches and returned statuses
+- The final envelope — a single JSON-like report summarizing the run's outcome, with paths to every deliverable
 
 ## Ingestion — the intake clerk
 
