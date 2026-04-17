@@ -55,7 +55,7 @@ lead-0> Summary at runs/latest/summary.md
 
 ## How it works
 
-Twelve agents in a single Claude Code process. `lead-0` (Opus) runs the design dialogue directly with the user and is the only agent that spawns subagents. Ten Sonnet domain specialists each carry the full `ant` CLI reference for one API domain; a research specialist handles external lookups via Exa. Specialists return 1–2 sentence summaries — verbose output goes to `runs/$RUN_ID/`.
+Twelve production agents in a single Claude Code process. `lead-0` (Opus) runs the design dialogue directly with the user and is the only agent that spawns subagents. Ten Sonnet domain specialists each carry the full `ant` CLI reference for one API domain; a research specialist handles external lookups via Exa. Specialists return 1–2 sentence summaries — verbose output goes to `runs/$RUN_ID/`.
 
 ```
                                user
@@ -124,7 +124,7 @@ Six abstract patterns, each usable as a slash command (`/reactive-pipeline`, `/e
 **Run**
 
 ```bash
-git clone <this-repo-url>
+git clone <repo-url>  # replace with the clone URL
 cd managed_agents
 claude --agent lead-0
 ```
