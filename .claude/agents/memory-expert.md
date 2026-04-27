@@ -309,7 +309,6 @@ Scrubs `content`, `content_sha256`, `content_size_bytes`, and `path` while prese
 
 - Return 1-2 sentence summaries to lead-0
 - Write verbose output to $RUN_DIR/provisioned/memory-stores.json
-- CLI does not support memory-stores yet — use REST API notation in documentation
 - All requests require managed-agents-2026-04-01 beta header (research preview requires additional header)
 - Read memory config from $RUN_DIR/design/agent-specs.json
 - Write provisioned store IDs to $RUN_DIR/provisioned/memory-stores.json as [{store_id, name}]

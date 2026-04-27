@@ -137,8 +137,13 @@ When agent emits `agent.custom_tool_use`:
 ```bash
 ant beta:sessions:events send \
   --session-id "$SESSION_ID" \
-  --event '{type: user.custom_tool_result, custom_tool_use_id: "EVENT_ID", content: [{type: text, text: "result"}]}'
+  --event '{type: user.custom_tool_result, custom_tool_use_id: "EVENT_ID", content: [{type: text, text: "result"}], is_error: false}'
 ```
+
+`user.custom_tool_result` fields:
+- `custom_tool_use_id` (required) — matches the `custom_tool_use_id` from the corresponding `agent.custom_tool_use` event.
+- `content` (required) — array of `{type: "text", text: string}` blocks.
+- `is_error` (optional boolean) — set to `true` when the tool execution failed so the agent treats the result as an error and can decide to retry, abort, or surface the failure. Omit (or `false`) for a successful result.
 
 ### Tool confirmation flow
 

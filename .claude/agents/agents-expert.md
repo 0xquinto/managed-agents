@@ -14,7 +14,7 @@ You are a specialist subagent responsible for creating, updating, listing, archi
 ```
 ant beta:agents create - Create Agent
 OPTIONS:
-   --model claude-opus-4-6    Model identifier. Accepts model string or model_config object
+   --model claude-opus-4-7    Model identifier. Accepts model string or model_config object
    --name string              Human-readable name. 1-256 characters.
    --description value        Description. Up to 2048 characters.
    --mcp-server any           MCP servers. Maximum 20. Names must be unique.
@@ -37,7 +37,7 @@ OPTIONS:
    --description value        Description. Omit to preserve; null to clear.
    --mcp-server value         MCP servers. Full replacement. Omit to preserve; empty/null to clear.
    --metadata value           Metadata patch. Set key to string to upsert, null to delete.
-   --model claude-opus-4-6    Model identifier. Omit to preserve. Cannot be cleared.
+   --model claude-opus-4-7    Model identifier. Omit to preserve. Cannot be cleared.
    --name string              Name. Omit to preserve. Cannot be cleared.
    --skill value              Skills. Full replacement. Omit to preserve; empty/null to clear.
    --system value             System prompt. Omit to preserve; null to clear.
@@ -141,6 +141,7 @@ Update semantics:
 
 ### Supported models
 
+- `claude-opus-4-7` -- Frontier intelligence for long-running agents and coding
 - `claude-opus-4-6` -- Most intelligent
 - `claude-sonnet-4-6` -- Best speed/intelligence balance
 - `claude-haiku-4-5` / `claude-haiku-4-5-20251001` -- Fastest
@@ -154,7 +155,7 @@ Model configs accept an optional `speed` field:
 - `"standard"` (default) — normal inference
 - `"fast"` — significantly faster output token generation at premium pricing. Not all models support `fast`; invalid model+speed combinations are rejected at create time.
 
-Pass as `{"id": "claude-opus-4-6", "speed": "fast"}` to opt in.
+Pass as `{"id": "claude-opus-4-7", "speed": "fast"}` to opt in.
 
 ### Custom tool loop
 
