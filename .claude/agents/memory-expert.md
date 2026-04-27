@@ -11,15 +11,130 @@ You are a specialist subagent for managing Anthropic Managed Agents memory store
 
 ## CLI Commands
 
-Note: `ant beta:memory-stores` does not yet exist in the CLI. Use the REST API directly or pass YAML via `ant beta:sessions create` for attaching stores to sessions.
+```
+ant beta:memory-stores create - Create Memory Store
+OPTIONS:
+   --name string                Store name (body param).
+   --description value          Description passed to the agent (body param).
+   --metadata string=any        Arbitrary key-value metadata. Max 16 pairs, keys 64 chars, values 512 chars (body param).
+   --beta string                Beta version header.
+
+ant beta:memory-stores retrieve - Get Memory Store
+OPTIONS:
+   --memory-store-id string     Path parameter memory_store_id.
+   --beta string                Beta version header.
+
+ant beta:memory-stores update - Update Memory Store
+OPTIONS:
+   --memory-store-id string     Path parameter memory_store_id.
+   --description value          Description. Omit to preserve; null to clear.
+   --metadata value             Metadata patch. Set key to string to upsert, null to delete. Limit 16 keys.
+   --name string                Name. Omit to preserve.
+   --beta string                Beta version header.
+
+ant beta:memory-stores list - List Memory Stores
+OPTIONS:
+   --created-at-gte value       Created at or after (inclusive).
+   --created-at-lte value       Created at or before (inclusive).
+   --include-archived           Include archived stores.
+   --limit int                  Max results per page.
+   --page string                Pagination cursor.
+   --beta string                Beta version header.
+
+ant beta:memory-stores archive - Archive Memory Store
+OPTIONS:
+   --memory-store-id string     Path parameter memory_store_id.
+   --beta string                Beta version header.
+
+ant beta:memory-stores delete - Delete Memory Store
+OPTIONS:
+   --memory-store-id string     Path parameter memory_store_id.
+   --beta string                Beta version header.
+
+ant beta:memory-stores:memories create - Create Memory
+OPTIONS:
+   --memory-store-id string     Path parameter memory_store_id.
+   --content string             Memory content (body param).
+   --path string                Memory path (body param).
+   --view "basic"|"full"        Response view. Default basic.
+   --beta string                Beta version header.
+
+ant beta:memory-stores:memories retrieve - Get Memory
+OPTIONS:
+   --memory-store-id string     Path parameter memory_store_id.
+   --memory-id string           Path parameter memory_id.
+   --view "basic"|"full"        Response view. Default basic; pass "full" to include content.
+   --beta string                Beta version header.
+
+ant beta:memory-stores:memories update - Update Memory
+OPTIONS:
+   --memory-store-id string     Path parameter memory_store_id.
+   --memory-id string           Path parameter memory_id.
+   --content value              New content. Omit to preserve.
+   --path value                 Rename target. Omit to preserve.
+   --precondition value         Optional `{type: "content_sha256" | "not_exists", content_sha256?: string}` for safe writes.
+   --view "basic"|"full"        Response view.
+   --beta string                Beta version header.
+
+ant beta:memory-stores:memories list - List Memories
+OPTIONS:
+   --memory-store-id string     Path parameter memory_store_id.
+   --depth int                  Max directory depth to traverse.
+   --limit int                  Max results per page.
+   --order "asc"|"desc"         Sort order.
+   --order-by string            Field to order by.
+   --page string                Pagination cursor.
+   --path-prefix string         Prefix filter (raw string-prefix; include trailing slash for directory-scoped lists).
+   --view "basic"|"full"        Default basic returns metadata only; "full" includes inline `content`.
+   --beta string                Beta version header.
+
+ant beta:memory-stores:memories delete - Delete Memory
+OPTIONS:
+   --memory-store-id string     Path parameter memory_store_id.
+   --memory-id string           Path parameter memory_id.
+   --expected-content-sha256 string  Optional conditional delete. Returns 409 on hash mismatch.
+   --beta string                Beta version header.
+
+ant beta:memory-stores:memory-versions list - List Memory Versions
+OPTIONS:
+   --memory-store-id string     Path parameter memory_store_id.
+   --api-key-id string          Filter by api key.
+   --created-at-gte value       Created at or after (inclusive).
+   --created-at-lte value       Created at or before (inclusive).
+   --limit int                  Max results per page.
+   --memory-id string           Filter by memory id.
+   --operation "created"|"modified"|"deleted"  Filter by operation.
+   --page string                Pagination cursor.
+   --session-id string          Filter by session id.
+   --view "basic"|"full"        Default basic returns metadata only.
+   --beta string                Beta version header.
+
+ant beta:memory-stores:memory-versions retrieve - Get Memory Version
+OPTIONS:
+   --memory-store-id string     Path parameter memory_store_id.
+   --memory-version-id string   Path parameter memory_version_id.
+   --beta string                Beta version header.
+
+ant beta:memory-stores:memory-versions redact - Redact Memory Version
+OPTIONS:
+   --memory-store-id string     Path parameter memory_store_id.
+   --memory-version-id string   Path parameter memory_version_id.
+   --beta string                Beta version header.
+```
+
+The CLI surface is a thin wrapper over the REST API documented below — every CLI option maps to a path/query/body field in the corresponding endpoint. For attaching a memory store to a session, see "Attach memory store to a session" below (uses `ant beta:sessions create` `resources[]`).
 
 ## API Reference
 
 ### Overview
 
-A memory store is a workspace-scoped collection of text documents optimized for Claude. When attached to a session, the agent automatically checks stores before starting a task and writes durable learnings when done — no additional prompting needed.
+A memory store is a workspace-scoped collection of text documents optimized for Claude. When attached to a session, each store is mounted inside the session's container as a directory under `/mnt/memory/`. A short description of each mount (path, access mode, store `description`, and any `instructions`) is automatically added to the system prompt — no additional prompting needed.
 
-Each memory is capped at 100KB (~25K tokens). Structure memory as many small focused files, not a few large ones.
+The agent reads and writes the mount with the **same standard file tools it uses for the rest of the filesystem** (no specialized `memory_*` tools). The agent toolset must be enabled at agent-creation time for these interactions to work. Reads and writes appear in the event stream as ordinary `agent.tool_use` / `agent.tool_result` events.
+
+Writes are persisted back to the store and stay in sync across sessions that share it. Concurrent writes are **caller-managed** via `content_sha256` preconditions (see "Safe writes" below) — the platform does not transparently merge concurrent edits.
+
+Each memory is capped at 100KB (~25K tokens). Structure memory as many small focused files, not a few large ones — and prefer distilled learnings over transcript-style logs.
 
 Requires `managed-agents-2026-04-01` beta header. Research preview features additionally require `managed-agents-2026-04-01-research-preview`.
 
@@ -62,10 +177,10 @@ Returns the full content.
 ### List memories
 
 ```
-GET /v1/memory_stores/$STORE_ID/memories?path_prefix=/
+GET /v1/memory_stores/$STORE_ID/memories?path_prefix=/&view=basic
 ```
 
-Does not return content, just metadata (`path`, `size_bytes`, `content_sha256`). Use `path_prefix` for directory-scoped lists (include trailing slash: `/notes/` matches `/notes/a.md` but not `/notes_backup/old.md`).
+By default (`view=basic`) returns metadata only (`path`, `size_bytes`, `content_sha256`). Pass `view=full` to include inline `content` on each item — useful for export/audit workflows. Use `path_prefix` for directory-scoped lists (include trailing slash: `/notes/` matches `/notes/a.md` but not `/notes_backup/old.md`).
 
 ### Update a memory (by ID)
 
@@ -136,18 +251,15 @@ Fields:
 
 Maximum 8 memory stores per session.
 
-### Memory tools
+### How the agent accesses memory
 
-When stores are attached, the agent automatically gains these tools (registered as `agent.tool_use` events):
+The agent does **not** receive specialized memory tools. It uses the standard file tools from the agent toolset (read, write, edit, list, etc.) against the mounted directory at `/mnt/memory/<mount>/`. This means:
 
-| Tool | Description |
-|---|---|
-| `memory_list` | List memories, optionally filtered by path prefix |
-| `memory_search` | Full-text search across memory contents |
-| `memory_read` | Read a memory's contents |
-| `memory_write` | Create or overwrite a memory at a path |
-| `memory_edit` | Modify an existing memory |
-| `memory_delete` | Remove a memory |
+- The agent toolset MUST be enabled when the agent is created (otherwise the mount is inaccessible).
+- File operations are visible in the event stream as ordinary `agent.tool_use` / `agent.tool_result` events.
+- The mount path, access mode, store description, and any session-specific `instructions` are auto-injected into the system prompt.
+
+Out-of-band CRUD (export, audit, bulk seed) goes through the REST endpoints documented above.
 
 ### Memory versions (auditing)
 
@@ -190,6 +302,8 @@ Scrubs `content`, `content_sha256`, `content_size_bytes`, and `path` while prese
 - **Shared reference material**: one read-only store attached to many sessions
 - **Per-user stores**: one store per end-user, shared agent config
 - **Different lifecycles**: a store that outlives sessions, archived on its own schedule
+- **Cross-session collaboration**: multiple agents writing to the same store stay in sync (writes from one session are visible to others). Use `content_sha256` preconditions on updates to avoid clobbering concurrent edits.
+- **Export / audit**: dump full store contents via `GET /memories?view=full` or fetch immutable history via `memory_versions`.
 
 ## Rules
 

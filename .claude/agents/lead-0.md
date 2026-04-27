@@ -284,7 +284,7 @@ Two-part gate. Do NOT render the spec as prose alone — the user approves again
 
 ### Pre-Phase-2 lints
 
-Two mechanical lint passes run before Part A validation dispatch, in this order: leakage-guard first, then `/mnt/session/`. Running leakage-guard first ensures unknown-key structural errors are resolved before path-format checks fire on known fields; otherwise a misclassified field could mask or be masked by a path complaint.
+Three mechanical lint passes run before Part A validation dispatch, in this order: leakage-guard first, then `/mnt/session/`, then memory-toolset coupling. Running leakage-guard first ensures unknown-key structural errors are resolved before path-format checks fire on known fields; otherwise a misclassified field could mask or be masked by a path complaint. The memory-toolset check runs last because it is a cross-domain semantic check, not a structural one.
 
 #### Leakage-guard lint (runs first)
 
@@ -328,6 +328,44 @@ Any occurrence whose path does NOT match the allow-list is a halting error:
 ```
 
 Mechanical — no specialist dispatch. If `sessions` objects grow new legitimate `/mnt/session/` fields in a future API version, extend the allow-list rather than relaxing the predicate.
+
+#### Memory-toolset coupling lint (runs third)
+
+Memory stores mount at `/mnt/memory/<mount>/` and the agent accesses them with the standard file tools from `agent_toolset_20260401`. An agent that attaches a memory store with the agent toolset disabled — or with `read`/`write`/`edit` individually disabled — will see the mount but cannot read or write it.
+
+```
+For every session object S in api_fields.sessions[]:
+  Collect S.resources[] entries with type == "memory_store"  → memory_attachments
+  If memory_attachments is empty: skip S.
+
+  Resolve the agent A referenced by S.agent (api_fields.agents[<id>]).
+  Inspect A.tools[]:
+    Let T = the entry whose type == "agent_toolset_20260401" (if any).
+
+    If T is missing:
+      Halt: "Session <S.id> attaches memory store(s) <ids> to agent <A.id>,
+             but agent <A.id> has no agent_toolset_20260401 entry. Memory mounts
+             require the agent toolset. Add `{type: agent_toolset_20260401}` to
+             agent.tools or detach the memory store(s)."
+
+    If T.default_config.enabled == false AND T.configs[] does not re-enable
+       all of {read, write, edit}:
+      Halt: "Agent <A.id> disables the agent toolset by default and does not
+             re-enable read/write/edit. Memory mount at /mnt/memory/ will be
+             inaccessible. Re-enable the file tools or detach memory store(s)."
+
+    If any of {read, write, edit} appears in T.configs[] with enabled == false:
+      Halt: "Agent <A.id> disables file tool '<name>'. Memory mount at
+             /mnt/memory/ requires read/write/edit. Re-enable or detach
+             memory store(s) <ids>."
+
+  If any memory_attachment has access == "read_write" but `read` is the only
+  enabled file tool, surface a WARNING (not halt): "Memory store mounted
+  read_write but only `read` is enabled — agent will not be able to persist
+  learnings."
+```
+
+Mechanical — no specialist dispatch. The check is structural (looks at `tools[]` shape on the agent) and does not require a specialist to ground. If `agent_toolset_20260401` is renamed in a future API version, update the type-string predicate.
 
 ### Part A — Validation dispatch (parallel)
 

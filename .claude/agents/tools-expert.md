@@ -35,6 +35,8 @@ Enable full toolset:
 {"type": "agent_toolset_20260401"}
 ```
 
+> **Memory store dependency**: If the agent will be attached to any memory stores, the agent toolset MUST be enabled — memory stores mount at `/mnt/memory/<mount>/` and the agent accesses them with the standard file tools (`read`, `write`, `edit`, `glob`, `grep`, `bash`). Disabling these tools while attaching a memory store leaves the mount inaccessible. See memory-expert.
+
 Disable specific tools:
 ```json
 {
