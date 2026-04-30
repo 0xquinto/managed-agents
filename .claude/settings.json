@@ -17,9 +17,14 @@
       "Bash(ant beta:vaults:credentials *)",
       "Bash(ant beta:files *)",
       "Bash(ant --version)",
+      "Bash(ant beta:memory_stores *)",
       "Bash(mkdir *)",
       "Bash(ln -sfn *)",
-      "Bash(ls *)"
+      "Bash(ls *)",
+      "Bash(rm -rf /tmp/behavior-auditor*)",
+      "Bash(rm -f /tmp/behavior-auditor*)",
+      "Bash(curl -s -H anthropic-beta* -H x-api-key* https://api.anthropic.com/*)",
+      "Bash(trap *)"
     ],
     "deny": []
   }
