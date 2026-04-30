@@ -47,7 +47,7 @@ OPTIONS:
 
 ### Overview
 
-Files are standalone resources that can be uploaded independently and mounted into session containers. The Files API uses the `files-api-2025-04-14` beta header (set automatically by the SDK).
+Files are standalone resources that can be uploaded independently and mounted into session containers. The Files API uses the `files-api-2025-04-14` beta header (set automatically by the SDK on every subcommand **except `upload`** — see the Known CLI bug callout below).
 
 ### Upload a file
 
@@ -56,6 +56,22 @@ ant beta:files upload --file ./data.csv
 ```
 
 Returns a file object with `id` (file_id), `filename`, `size_bytes`, `created_at`.
+
+> **Known CLI bug (as of 2026-04-30):** `ant beta:files upload` sends `?beta=true` as a query parameter instead of the `anthropic-beta: files-api-2025-04-14` request header, so the API responds 400 Bad Request. Every other beta subcommand (`beta:agents`, `beta:vaults`, `beta:environments`, etc.) sets the correct header automatically — this one is broken. Confirmed by behavior-auditor probe `P-files-1` (see `.claude/agents/behavior-auditor.md`).
+>
+> **Workaround until the CLI is fixed:**
+>
+> ```bash
+> curl -s \
+>   -H "anthropic-beta: files-api-2025-04-14" \
+>   -H "x-api-key: $ANTHROPIC_API_KEY" \
+>   -F "file=@./data.csv" \
+>   https://api.anthropic.com/v1/files
+> ```
+>
+> The key flows from the environment to the request header — never echoed, never written to disk. This is a **scoped exception to CLAUDE.md's "no curl with auth headers" rule**, narrowly authorized for `beta:files upload` only and only until the CLI ships a fix. Every other API call still goes through `ant`. Other `ant beta:files` subcommands (`download`, `list`, `retrieve-metadata`, `delete`) already work correctly through the CLI.
+>
+> Re-confirm the bug via `behavior-auditor` replay of `P-files-1`; on a `RESOLVED` verdict, remove this callout and revert the parenthetical on the Overview line above.
 
 ### Mounting files at session creation
 

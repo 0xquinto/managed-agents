@@ -80,7 +80,7 @@ OPTIONS:
 | `tools` | Tools available. Three variants: `agent_toolset_20260401` (built-in: bash, edit, read, write, glob, grep, web_fetch, web_search), `mcp_toolset` (references an `mcp_server_name` from `mcp_servers`), and `custom` (client-executed). Each has per-tool `configs` overrides, a `default_config`, and a `permission_policy` of `always_allow` or `always_ask`. Max 128 across all toolsets. See tools-expert for full schema. **If any session will attach a memory store, `agent_toolset_20260401` (with file tools enabled) is required** — the mount at `/mnt/memory/` is accessed via standard file tools. See memory-expert. |
 | `mcp_servers` | MCP servers for third-party capabilities. Each entry is `{name: string (1-255 chars, unique within array), type: "url", url: string}`. Max 20. |
 | `skills` | Skills for domain-specific context. Each entry is `{skill_id: string, type: "anthropic" \| "custom", version?: string}`. Max 20. See skills-expert. |
-| `callable_agents` | Other agents this agent can invoke (multi-agent). Research-preview feature — not in the public upstream agents schema. Requires the `managed-agents-2026-04-01-research-preview` beta header in addition to `managed-agents-2026-04-01`. See multiagent-expert for dispatch semantics. |
+| `callable_agents` | Other agents this agent can invoke (multi-agent). Research-preview feature — not in the public upstream agents schema. **Currently not entitled on this account — see the entitlement precondition in `multiagent-expert.md`** before including this field in any provisioning request. |
 | `description` | Description of what the agent does. Up to 2048 chars. |
 | `metadata` | Key-value pairs. Max 16, keys 64 chars, values 512 chars. |
 

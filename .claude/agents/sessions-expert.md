@@ -191,6 +191,10 @@ ant beta:sessions:resources add \
   --type file
 ```
 
+> **Mount path prefix (file resources only):** for `type: file` resources, the `mount_path` value you supply is **appended** to `/mnt/session/uploads/`, not used as the absolute path. So `mount_path: "input/report.pdf"` lands at `/mnt/session/uploads/input/report.pdf` inside the container, not `/input/report.pdf`. The CLI flag help (`--mount-path` "Default: /mnt/session/uploads/<file_id>") hints at this but the prefix behavior applies even when you pass an explicit value.
+>
+> Implication for agent system prompts: an ingestion agent that expects `/mnt/session/input/<contract_id>/...` will not find files there — either pass `mount_path: "input/<contract_id>/..."` and have the prompt expect `/mnt/session/uploads/input/...`, or symlink at session-init time. The published examples for `github_repository` (e.g. `mount_path: "/workspace/repo"`) and `memory_store` (`/mnt/memory/...`) show absolute paths, suggesting they are not affected by the same prefix — but `P-sessions-1` only probes the file-resource case, so treat the file-resource prefix as the only confirmed observation. Re-confirm via `behavior-auditor` replay of `P-sessions-1`; on a `RESOLVED` verdict (or once a probe extension covers the other resource types), update this note.
+
 Memory store resource at session creation (research preview):
 ```bash
 ant beta:sessions create <<YAML
