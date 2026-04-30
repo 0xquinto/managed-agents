@@ -1,0 +1,87 @@
+{
+  "case_id": "ingestion/tafi_2025",
+  "schema_version": 1,
+  "description": "Frozen ground-truth assertions for any agent in the ingestion role processing the Tafi 2025 contract. Captured from runs/2026-04-30T18-40-29Z-poc/smoke/.",
+
+  "envelope": [
+    { "field": "status", "type": "exact", "value": "ok",
+      "rationale": "agent must signal a successful, non-halt result" },
+    { "field": "missing_fields", "type": "exact", "value": [],
+      "rationale": "every required normalized output must be present; coordinator halts on non-empty list" },
+    { "field": "manifest_path", "type": "exact", "value": "/mnt/session/out/tafi_2025/manifest.json",
+      "rationale": "downstream layers locate the manifest by this path" },
+    { "field": "normalized_dir", "type": "exact", "value": "/mnt/session/out/tafi_2025/normalized/",
+      "rationale": "synthesis agents read normalized CSVs from this directory" }
+  ],
+
+  "envelope_format": [
+    { "type": "no_markdown_fences",
+      "rationale": "the envelope must be raw JSON parseable by the coordinator without stripping ```json fences" },
+    { "type": "no_surrounding_prose",
+      "rationale": "BLOCK_COMPLETED discipline — the agent's final message is the envelope and nothing else" }
+  ],
+
+  "outputs": [
+    { "type": "file_exists", "path": "/mnt/session/out/tafi_2025/manifest.json" },
+    { "type": "file_exists", "path": "/mnt/session/out/tafi_2025/classification.json" },
+    { "type": "file_exists", "path": "/mnt/session/out/tafi_2025/normalized/entity.json" },
+    { "type": "file_exists", "path": "/mnt/session/out/tafi_2025/normalized/pnl_raw.csv" },
+    { "type": "file_exists", "path": "/mnt/session/out/tafi_2025/normalized/balance_raw.csv" },
+    { "type": "file_exists", "path": "/mnt/session/out/tafi_2025/normalized/cashflow_raw.csv" },
+    { "type": "file_exists", "path": "/mnt/session/out/tafi_2025/normalized/assumptions.md" }
+  ],
+
+  "manifest": {
+    "required_keys": ["entity", "periods", "pdf_extraction", "csv_extraction", "quality_flags", "reconciliations", "outputs"],
+    "field_assertions": [
+      { "field": "pdf_extraction.method", "type": "contains_one_of", "values": ["pypdf", "pdfplumber", "ocr"],
+        "rationale": "downstream regression detection on extraction-method drift" },
+      { "field": "pdf_extraction.pages", "type": "range", "min": 30, "max": 60,
+        "rationale": "Tafi 2025 has 39 pages — bound the assertion loose enough to tolerate page-count revisions of the source doc" },
+      { "field": "csv_extraction.rows", "type": "range", "min": 100000, "max": 200000,
+        "rationale": "biweekly snapshots over ~14 months — bounded but not exact (avoids PII)" },
+      { "field": "csv_extraction.cols", "type": "exact", "value": 24,
+        "rationale": "schema is a stable contract — column count drift is a real signal" }
+    ]
+  },
+
+  "quality_flags": {
+    "count_at_least": 5,
+    "count_at_most": 12,
+    "all_severities_in": ["warn", "error", "info"],
+    "categories_include": [
+      { "category": "going_concern",
+        "must_match_any": ["going-concern", "going_concern", "negative equity", "negative_equity"],
+        "rationale": "Tafi has negative equity and a 98x YoY loss deterioration — a real ingestion agent must flag this" },
+      { "category": "encoding_issue",
+        "must_match_any": ["utf-8", "utf8", "encoding", "mojibake"],
+        "rationale": "9.2% of CSV rows have UTF-8 mojibake in the Cliente field — must be surfaced" },
+      { "category": "snapshot_series_caveat",
+        "must_match_any": ["snapshot", "biweekly", "Source.Name", "cut-date", "cumulative"],
+        "rationale": "the CSV is cumulative-snapshot — naive aggregation overcounts; downstream needs to know" }
+    ]
+  },
+
+  "reconciliations": [
+    { "name": "balance_sheet_2025",
+      "field": "reconciliations.balance_sheet_2025.diff",
+      "type": "range", "min": -1.0, "max": 1.0,
+      "rationale": "a balance sheet must balance — within rounding, diff is zero" },
+    { "name": "balance_sheet_2024",
+      "field": "reconciliations.balance_sheet_2024.diff",
+      "type": "range", "min": -1.0, "max": 1.0 },
+    { "name": "cashflow_2025",
+      "field": "reconciliations.cashflow_2025.reconciled",
+      "type": "exact", "value": true },
+    { "name": "cashflow_2024",
+      "field": "reconciliations.cashflow_2024.reconciled",
+      "type": "exact", "value": true }
+  ],
+
+  "discipline": [
+    { "type": "no_error_events",
+      "rationale": "the run produced zero is_error: true events — any new error is a regression unless explicitly justified" },
+    { "type": "stop_reason", "value": "end_turn",
+      "rationale": "the agent must terminate cleanly, not via tool-budget exhaustion or an external halt" }
+  ]
+}
