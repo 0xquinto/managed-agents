@@ -2,24 +2,33 @@
 """
 Score a captured agent run against an eval case's expected.json.
 
-Usage:
-    score.py <case_path> --run <run_dir> [--manifest <path>]
+Two modes:
 
-<case_path>    e.g. ingestion/tafi_2025
-<run_dir>      directory containing the captured envelope + (optionally) the manifest
-                — for replay mode this is typically runs/<id>/smoke/
+  Single-trial (existing behaviour):
+      score.py <case> --run <run_dir> [--manifest <path>]
 
-The scorer looks for these files inside <run_dir>:
-    ingestion_final_envelope.json   the agent's final user-message JSON
-    manifest.json                   (optional) the manifest the agent wrote
-    events.json                     (optional) full event stream for discipline checks
+  Multi-trial aggregate (per playbook § 9 — Wilson CI, paired-test ready):
+      score.py <case> --trials <trials_dir> [--paraphrase v1_canonical]
 
-Exit code = number of failed assertions (0 = pass).
+In multi-trial mode, <trials_dir> contains subdirectories — one per trial —
+each with the same shape as a single-trial <run_dir>. The scorer computes a
+Wilson-95% pass-rate per assertion across trials, broken out by the
+`process` / `outcome` / `environment` columns.
+
+Reporting unit per playbook § 8 (Bowyer ICML 2025 + ICLR Blogposts 2025):
+    <rate> [<lo>, <hi>] (Wilson 95%, n=N)
+
+Exit code = number of failed PROCESS-column assertions (process is the
+column attributed to the agent; outcome co-tagged with environment;
+environment failures are reported but excluded from the agent's pass-rate).
 """
 
 import argparse
+import csv
 import json
+import math
 import sys
+from io import StringIO
 from pathlib import Path
 
 
@@ -29,7 +38,6 @@ def load_json(path: Path):
 
 
 def get_field(obj, dotted_path: str):
-    """Walk a.b.c into a nested dict; return (found, value)."""
     cur = obj
     for part in dotted_path.split("."):
         if not isinstance(cur, dict) or part not in cur:
@@ -38,181 +46,26 @@ def get_field(obj, dotted_path: str):
     return True, cur
 
 
-def score_envelope(expected, envelope, results):
-    for a in expected.get("envelope", []):
-        field, kind = a["field"], a["type"]
-        found, val = get_field(envelope, field)
-        if not found:
-            results.append(("FAIL", f"envelope.{field}", f"missing field"))
-            continue
-        if kind == "exact":
-            ok = val == a["value"]
-            results.append(("PASS" if ok else "FAIL", f"envelope.{field}",
-                            f"expected={a['value']!r} actual={val!r}"))
-        else:
-            results.append(("ERROR", f"envelope.{field}", f"unsupported assertion type {kind!r}"))
-
-
-def score_envelope_format(expected, envelope_str, results):
-    for a in expected.get("envelope_format", []):
-        kind = a["type"]
-        if kind == "no_markdown_fences":
-            ok = "```" not in envelope_str
-            results.append(("PASS" if ok else "FAIL", "envelope_format.no_markdown_fences",
-                            "envelope is raw JSON" if ok else "envelope wraps JSON in ``` fences"))
-        elif kind == "no_surrounding_prose":
-            stripped = envelope_str.strip()
-            ok = stripped.startswith("{") and stripped.endswith("}")
-            results.append(("PASS" if ok else "FAIL", "envelope_format.no_surrounding_prose",
-                            "envelope is a single JSON object" if ok else "envelope has surrounding prose"))
-        else:
-            results.append(("ERROR", "envelope_format", f"unsupported assertion type {kind!r}"))
-
-
-def score_outputs(expected, run_dir: Path, results, manifest):
-    """File-exists assertions can be checked two ways: against locally-mirrored files OR
-    against a 'outputs' field in the manifest if the agent recorded one. Both modes are accepted."""
-    declared_outputs = set()
-    if manifest and isinstance(manifest.get("outputs"), list):
-        for o in manifest["outputs"]:
-            if isinstance(o, dict) and "path" in o:
-                declared_outputs.add(o["path"])
-            elif isinstance(o, str):
-                declared_outputs.add(o)
-
-    for a in expected.get("outputs", []):
-        if a["type"] != "file_exists":
-            results.append(("ERROR", f"outputs", f"unsupported type {a['type']!r}"))
-            continue
-        path = a["path"]
-        local = run_dir / path.lstrip("/")
-        ok = local.exists() or path in declared_outputs
-        results.append(("PASS" if ok else "FAIL", f"outputs.file_exists",
-                        f"{path} {'(local mirror)' if local.exists() else '(via manifest.outputs)' if ok else '(missing)'}"))
-
-
-def score_manifest(expected, manifest, results):
-    spec = expected.get("manifest")
-    if spec is None:
-        return
-    if manifest is None:
-        results.append(("SKIP", "manifest", "manifest.json not present in run dir; skipping all manifest assertions"))
-        return
-
-    for k in spec.get("required_keys", []):
-        ok = k in manifest
-        results.append(("PASS" if ok else "FAIL", f"manifest.required_keys.{k}",
-                        "present" if ok else "missing"))
-
-    for a in spec.get("field_assertions", []):
-        field, kind = a["field"], a["type"]
-        found, val = get_field(manifest, field)
-        if not found:
-            results.append(("FAIL", f"manifest.{field}", "missing field"))
-            continue
-        if kind == "exact":
-            ok = val == a["value"]
-            results.append(("PASS" if ok else "FAIL", f"manifest.{field}",
-                            f"expected={a['value']!r} actual={val!r}"))
-        elif kind == "range":
-            if val is None:
-                results.append(("FAIL", f"manifest.{a['field']}", "value is null"))
-                continue
-            try:
-                num = float(val)  # type: ignore[arg-type]
-                ok = a.get("min", float("-inf")) <= num <= a.get("max", float("inf"))
-                results.append(("PASS" if ok else "FAIL", f"manifest.{field}",
-                                f"in [{a.get('min')}, {a.get('max')}] actual={val}"))
-            except (TypeError, ValueError):
-                results.append(("FAIL", f"manifest.{field}", f"not numeric: {val!r}"))
-        elif kind == "contains_one_of":
-            sval = str(val).lower()
-            ok = any(opt.lower() in sval for opt in a["values"])
-            results.append(("PASS" if ok else "FAIL", f"manifest.{field}",
-                            f"one of {a['values']!r} actual={val!r}"))
-        else:
-            results.append(("ERROR", f"manifest.{field}", f"unsupported type {kind!r}"))
-
-
-def score_quality_flags(expected, manifest, results):
-    spec = expected.get("quality_flags")
-    if spec is None:
-        return
-    if manifest is None:
-        results.append(("SKIP", "quality_flags", "manifest.json not present"))
-        return
-
-    flags = manifest.get("quality_flags", [])
-    if not isinstance(flags, list):
-        results.append(("FAIL", "quality_flags", "manifest.quality_flags is not a list"))
-        return
-
-    n = len(flags)
-    if "count_at_least" in spec:
-        ok = n >= spec["count_at_least"]
-        results.append(("PASS" if ok else "FAIL", "quality_flags.count_at_least",
-                        f"n={n} bound>={spec['count_at_least']}"))
-    if "count_at_most" in spec:
-        ok = n <= spec["count_at_most"]
-        results.append(("PASS" if ok else "FAIL", "quality_flags.count_at_most",
-                        f"n={n} bound<={spec['count_at_most']}"))
-
-    if "all_severities_in" in spec:
-        allowed = set(s.lower() for s in spec["all_severities_in"])
-        actual = set(str(f.get("severity", "")).lower() for f in flags if isinstance(f, dict))
-        bad = actual - allowed
-        ok = not bad
-        results.append(("PASS" if ok else "FAIL", "quality_flags.all_severities_in",
-                        f"actual={sorted(actual)} allowed={sorted(allowed)}"
-                        + (f" unexpected={sorted(bad)}" if bad else "")))
-
-    flag_text_blob = " ".join(
-        " ".join(str(v) for v in f.values()) if isinstance(f, dict) else str(f)
-        for f in flags
-    ).lower()
-    for cat in spec.get("categories_include", []):
-        ok = any(token.lower() in flag_text_blob for token in cat["must_match_any"])
-        results.append(("PASS" if ok else "FAIL", f"quality_flags.category.{cat['category']}",
-                        f"matched any of {cat['must_match_any']!r}"))
-
-
-def score_reconciliations(expected, manifest, results):
-    if manifest is None:
-        if expected.get("reconciliations"):
-            results.append(("SKIP", "reconciliations", "manifest.json not present"))
-        return
-    for a in expected.get("reconciliations", []):
-        field = a["field"]
-        kind = a["type"]
-        found, val = get_field(manifest, field)
-        if not found:
-            results.append(("FAIL", f"reconciliations.{a['name']}", f"missing {field}"))
-            continue
-        if kind == "exact":
-            ok = val == a["value"]
-            results.append(("PASS" if ok else "FAIL", f"reconciliations.{a['name']}",
-                            f"expected={a['value']!r} actual={val!r}"))
-        elif kind == "range":
-            if val is None:
-                results.append(("FAIL", f"reconciliations.{a['name']}", "value is null"))
-                continue
-            try:
-                num = float(val)  # type: ignore[arg-type]
-                ok = a.get("min", float("-inf")) <= num <= a.get("max", float("inf"))
-                results.append(("PASS" if ok else "FAIL", f"reconciliations.{a['name']}",
-                                f"in [{a.get('min')}, {a.get('max')}] actual={val}"))
-            except (TypeError, ValueError):
-                results.append(("FAIL", f"reconciliations.{a['name']}", f"not numeric: {val!r}"))
+def wilson_ci(k: int, n: int, z: float = 1.96):
+    """Wilson 95% confidence interval for a binomial proportion.
+    Per playbook § 8 — Wald/CLT-based CIs are forbidden at small n; they
+    under-cover near p=0 and p=1.
+    """
+    if n == 0:
+        return 0.0, 0.0, 0.0
+    p = k / n
+    denom = 1 + z * z / n
+    center = (p + z * z / (2 * n)) / denom
+    margin = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / denom
+    return p, max(0.0, center - margin), min(1.0, center + margin)
 
 
 def parse_event_stream(path: Path):
-    """The platform's events.json / raw_stream.json is concatenated JSON objects,
-    not a JSON array and not strict JSONL. Walk with raw_decode."""
+    """events.json / raw_stream.json is concatenated JSON objects (not array, not strict JSONL)."""
     text = path.read_text()
     dec = json.JSONDecoder()
-    pos = 0
+    pos, n = 0, len(text)
     out = []
-    n = len(text)
     while pos < n:
         while pos < n and text[pos] in " \t\n\r":
             pos += 1
@@ -228,66 +81,411 @@ def parse_event_stream(path: Path):
 
 
 def normalize_stop_reason(val):
-    """stop_reason can be either a string ('end_turn') or {'type': 'end_turn'}."""
     if isinstance(val, dict):
         return val.get("type")
     return val
 
 
-def score_discipline(expected, run_dir: Path, results):
+# --- Per-assertion scoring (returns list of (status, name, detail, column)) ---
+
+
+def _result(status, name, detail, column):
+    return (status, name, detail, column)
+
+
+def score_envelope(expected, envelope):
+    out = []
+    for a in expected.get("envelope", []):
+        col = a.get("column", "process")
+        field, kind = a["field"], a["type"]
+        found, val = get_field(envelope, field)
+        if not found:
+            out.append(_result("FAIL", f"envelope.{field}", "missing field", col))
+            continue
+        if kind == "exact":
+            ok = val == a["value"]
+            out.append(_result("PASS" if ok else "FAIL", f"envelope.{field}",
+                               f"expected={a['value']!r} actual={val!r}", col))
+        else:
+            out.append(_result("ERROR", f"envelope.{field}", f"unsupported type {kind!r}", col))
+    return out
+
+
+def score_envelope_format(expected, envelope_str):
+    out = []
+    for a in expected.get("envelope_format", []):
+        col = a.get("column", "process")
+        kind = a["type"]
+        if kind == "no_markdown_fences":
+            ok = "```" not in envelope_str
+            out.append(_result("PASS" if ok else "FAIL", "envelope_format.no_markdown_fences",
+                               "envelope is raw JSON" if ok else "envelope wraps JSON in ``` fences", col))
+        elif kind == "no_surrounding_prose":
+            stripped = envelope_str.strip()
+            ok = stripped.startswith("{") and stripped.endswith("}")
+            out.append(_result("PASS" if ok else "FAIL", "envelope_format.no_surrounding_prose",
+                               "envelope is a single JSON object" if ok else "envelope has surrounding prose", col))
+        else:
+            out.append(_result("ERROR", "envelope_format", f"unsupported type {kind!r}", col))
+    return out
+
+
+def _validate_format(local_path: Path, fmt: str):
+    """Returns (ok, detail). Defeats stub-file masking — empty or unparseable files fail."""
+    if not local_path.exists():
+        return False, "missing"
+    size = local_path.stat().st_size
+    if size == 0:
+        return False, "empty (0 bytes)"
+    try:
+        if fmt == "json":
+            json.loads(local_path.read_text())
+        elif fmt == "csv":
+            txt = local_path.read_text()
+            reader = csv.reader(StringIO(txt))
+            rows = list(reader)
+            if not rows:
+                return False, "csv parsed but contains zero rows"
+        elif fmt == "text":
+            txt = local_path.read_text()
+            if not txt.strip():
+                return False, "text file is whitespace-only"
+        else:
+            return False, f"unknown format {fmt!r}"
+    except Exception as e:
+        return False, f"{fmt} parse error: {e}"
+    return True, f"{size} bytes, parses as {fmt}"
+
+
+def score_outputs(expected, run_dir: Path, manifest):
+    out = []
+    declared = set()
+    if manifest and isinstance(manifest.get("outputs"), list):
+        for o in manifest["outputs"]:
+            if isinstance(o, dict) and "path" in o:
+                declared.add(o["path"])
+            elif isinstance(o, str):
+                declared.add(o)
+
+    for a in expected.get("outputs", []):
+        col = a.get("column", "outcome")
+        path = a["path"]
+        kind = a["type"]
+        local = run_dir / path.lstrip("/")
+
+        if kind == "file_exists_and_nonempty":
+            fmt = a.get("format", "json")
+            if local.exists():
+                ok, detail = _validate_format(local, fmt)
+                out.append(_result("PASS" if ok else "FAIL", "outputs.file_exists_and_nonempty",
+                                   f"{path} ({detail})", col))
+            elif path in declared:
+                # Manifest declares it but we don't have the file locally.
+                # Score as INCONCLUSIVE — a real environment confounder; not a process fail.
+                out.append(_result("SKIP", "outputs.file_exists_and_nonempty",
+                                   f"{path} (declared in manifest, not mirrored locally)", "environment"))
+            else:
+                out.append(_result("FAIL", "outputs.file_exists_and_nonempty",
+                                   f"{path} (missing, not declared)", col))
+        elif kind == "file_exists":
+            ok = local.exists() or path in declared
+            out.append(_result("PASS" if ok else "FAIL", "outputs.file_exists",
+                               f"{path} {'(local)' if local.exists() else '(via manifest)' if ok else '(missing)'}",
+                               col))
+        else:
+            out.append(_result("ERROR", "outputs", f"unsupported type {kind!r}", col))
+    return out
+
+
+def score_manifest(expected, manifest):
+    out = []
+    spec = expected.get("manifest")
+    if spec is None:
+        return out
+    if manifest is None:
+        out.append(_result("SKIP", "manifest", "manifest.json not present", "environment"))
+        return out
+    for k in spec.get("required_keys", []):
+        ok = k in manifest
+        out.append(_result("PASS" if ok else "FAIL", f"manifest.required_keys.{k}",
+                           "present" if ok else "missing", "outcome"))
+    for a in spec.get("field_assertions", []):
+        col = a.get("column", "outcome")
+        field, kind = a["field"], a["type"]
+        found, val = get_field(manifest, field)
+        if not found:
+            out.append(_result("FAIL", f"manifest.{field}", "missing field", col))
+            continue
+        if kind == "exact":
+            ok = val == a["value"]
+            out.append(_result("PASS" if ok else "FAIL", f"manifest.{field}",
+                               f"expected={a['value']!r} actual={val!r}", col))
+        elif kind == "range":
+            if val is None:
+                out.append(_result("FAIL", f"manifest.{field}", "value is null", col))
+                continue
+            try:
+                num = float(val)  # type: ignore[arg-type]
+                ok = a.get("min", float("-inf")) <= num <= a.get("max", float("inf"))
+                out.append(_result("PASS" if ok else "FAIL", f"manifest.{field}",
+                                   f"in [{a.get('min')}, {a.get('max')}] actual={val}", col))
+            except (TypeError, ValueError):
+                out.append(_result("FAIL", f"manifest.{field}", f"not numeric: {val!r}", col))
+        elif kind == "contains_one_of":
+            sval = str(val).lower()
+            ok = any(opt.lower() in sval for opt in a["values"])
+            out.append(_result("PASS" if ok else "FAIL", f"manifest.{field}",
+                               f"one of {a['values']!r} actual={val!r}", col))
+        else:
+            out.append(_result("ERROR", f"manifest.{field}", f"unsupported type {kind!r}", col))
+    return out
+
+
+def score_quality_flags(expected, manifest):
+    out = []
+    spec = expected.get("quality_flags")
+    if spec is None:
+        return out
+    col = spec.get("column", "process")
+    if manifest is None:
+        out.append(_result("SKIP", "quality_flags", "manifest.json not present", "environment"))
+        return out
+    flags = manifest.get("quality_flags", [])
+    if not isinstance(flags, list):
+        out.append(_result("FAIL", "quality_flags", "not a list", col))
+        return out
+    n = len(flags)
+    if "count_at_least" in spec:
+        ok = n >= spec["count_at_least"]
+        out.append(_result("PASS" if ok else "FAIL", "quality_flags.count_at_least",
+                           f"n={n} bound>={spec['count_at_least']}", col))
+    if "count_at_most" in spec:
+        ok = n <= spec["count_at_most"]
+        out.append(_result("PASS" if ok else "FAIL", "quality_flags.count_at_most",
+                           f"n={n} bound<={spec['count_at_most']}", col))
+    if "all_severities_in" in spec:
+        allowed = set(s.lower() for s in spec["all_severities_in"])
+        actual = set(str(f.get("severity", "")).lower() for f in flags if isinstance(f, dict))
+        bad = actual - allowed
+        ok = not bad
+        out.append(_result("PASS" if ok else "FAIL", "quality_flags.all_severities_in",
+                           f"actual={sorted(actual)} allowed={sorted(allowed)}"
+                           + (f" unexpected={sorted(bad)}" if bad else ""), col))
+    blob = " ".join(
+        " ".join(str(v) for v in f.values()) if isinstance(f, dict) else str(f)
+        for f in flags
+    ).lower()
+    for cat in spec.get("categories_include", []):
+        c_col = cat.get("column", col)
+        ok = any(t.lower() in blob for t in cat["must_match_any"])
+        out.append(_result("PASS" if ok else "FAIL", f"quality_flags.category.{cat['category']}",
+                           f"matched any of {cat['must_match_any']!r}", c_col))
+    return out
+
+
+def score_reconciliations(expected, manifest):
+    out = []
+    if manifest is None:
+        if expected.get("reconciliations"):
+            out.append(_result("SKIP", "reconciliations", "manifest.json not present", "environment"))
+        return out
+    for a in expected.get("reconciliations", []):
+        col = a.get("column", "outcome")
+        field, kind = a["field"], a["type"]
+        found, val = get_field(manifest, field)
+        if not found:
+            out.append(_result("FAIL", f"reconciliations.{a['name']}", f"missing {field}", col))
+            continue
+        if kind == "exact":
+            ok = val == a["value"]
+            out.append(_result("PASS" if ok else "FAIL", f"reconciliations.{a['name']}",
+                               f"expected={a['value']!r} actual={val!r}", col))
+        elif kind == "range":
+            if val is None:
+                out.append(_result("FAIL", f"reconciliations.{a['name']}", "value is null", col))
+                continue
+            try:
+                num = float(val)  # type: ignore[arg-type]
+                ok = a.get("min", float("-inf")) <= num <= a.get("max", float("inf"))
+                out.append(_result("PASS" if ok else "FAIL", f"reconciliations.{a['name']}",
+                                   f"in [{a.get('min')}, {a.get('max')}] actual={val}", col))
+            except (TypeError, ValueError):
+                out.append(_result("FAIL", f"reconciliations.{a['name']}", f"not numeric: {val!r}", col))
+    return out
+
+
+def score_discipline(expected, run_dir: Path):
+    out = []
     events_path = run_dir / "events.json"
     if not events_path.exists():
         events_path = run_dir / "raw_stream.json"
     events = parse_event_stream(events_path) if events_path.exists() else None
-
     for a in expected.get("discipline", []):
+        col = a.get("column", "process")
         kind = a["type"]
         if kind == "no_error_events":
             if events is None:
-                results.append(("SKIP", "discipline.no_error_events", "no events.json or raw_stream.json"))
+                out.append(_result("SKIP", "discipline.no_error_events", "no event stream", "environment"))
                 continue
             errs = [e for e in events if isinstance(e, dict) and e.get("is_error") is True]
             ok = not errs
-            results.append(("PASS" if ok else "FAIL", "discipline.no_error_events",
-                            f"errors={len(errs)}"))
+            out.append(_result("PASS" if ok else "FAIL", "discipline.no_error_events",
+                               f"errors={len(errs)}", col))
         elif kind == "stop_reason":
             if events is None:
-                results.append(("SKIP", "discipline.stop_reason", "no event stream"))
+                out.append(_result("SKIP", "discipline.stop_reason", "no event stream", "environment"))
                 continue
             stops = [normalize_stop_reason(e.get("stop_reason"))
                      for e in events if isinstance(e, dict) and e.get("stop_reason")]
             stops = [s for s in stops if s]
             ok = a["value"] in stops if stops else False
-            results.append(("PASS" if ok else "FAIL", "discipline.stop_reason",
-                            f"expected={a['value']!r} observed={stops!r}"))
+            out.append(_result("PASS" if ok else "FAIL", "discipline.stop_reason",
+                               f"expected={a['value']!r} observed={stops!r}", col))
+    return out
 
 
-def render_scorecard(results, case_id, run_dir, manifest_present):
+def score_one_trial(expected, run_dir: Path, manifest_override: Path | None = None):
+    """Run all assertions against a single trial directory. Returns the result list."""
+    envelope_path = run_dir / "ingestion_final_envelope.json"
+    if not envelope_path.exists():
+        return [_result("FAIL", "envelope", f"missing {envelope_path}", "environment")]
+    envelope_str = envelope_path.read_text()
+    envelope = json.loads(envelope_str)
+
+    mp = manifest_override or (run_dir / "manifest.json")
+    manifest = load_json(mp) if mp.exists() else None
+
+    results = []
+    results += score_envelope(expected, envelope)
+    results += score_envelope_format(expected, envelope_str)
+    results += score_outputs(expected, run_dir, manifest)
+    results += score_manifest(expected, manifest)
+    results += score_quality_flags(expected, manifest)
+    results += score_reconciliations(expected, manifest)
+    results += score_discipline(expected, run_dir)
+    return results
+
+
+# --- Aggregation across trials ---
+
+
+def aggregate_trials(trial_results: list[list[tuple]]):
+    """Aggregate per-assertion pass/fail across N trials.
+    Returns list of dicts with rate + Wilson CI + column."""
+    by_assertion: dict[str, dict] = {}
+    for results in trial_results:
+        for status, name, detail, column in results:
+            entry = by_assertion.setdefault(name, {"name": name, "column": column, "n": 0, "k": 0, "skips": 0, "errors": 0, "last_detail": detail})
+            entry["n"] += 1 if status in ("PASS", "FAIL") else 0
+            entry["k"] += 1 if status == "PASS" else 0
+            if status == "SKIP":
+                entry["skips"] += 1
+            if status == "ERROR":
+                entry["errors"] += 1
+            entry["last_detail"] = detail
+    rows = []
+    for name, e in by_assertion.items():
+        rate, lo, hi = wilson_ci(e["k"], e["n"]) if e["n"] > 0 else (None, None, None)
+        rows.append({
+            **e,
+            "rate": rate,
+            "ci_lo": lo,
+            "ci_hi": hi,
+        })
+    return rows
+
+
+# --- Rendering ---
+
+
+def render_single_trial(results, case_id, run_dir, manifest_present):
     out = []
-    out.append(f"# Eval scorecard: `{case_id}`")
+    out.append(f"# Eval scorecard (single-trial): `{case_id}`")
     out.append("")
     out.append(f"**Run directory:** `{run_dir}`")
-    out.append(f"**Manifest:** {'present' if manifest_present else 'absent (manifest assertions skipped)'}")
+    out.append(f"**Manifest:** {'present' if manifest_present else 'absent (manifest assertions reported as SKIP/environment)'}")
     out.append("")
-    n_pass = sum(1 for r in results if r[0] == "PASS")
-    n_fail = sum(1 for r in results if r[0] == "FAIL")
-    n_err = sum(1 for r in results if r[0] == "ERROR")
-    n_skip = sum(1 for r in results if r[0] == "SKIP")
-    verdict = "PASS" if n_fail == 0 and n_err == 0 else "FAIL"
-    out.append(f"**Verdict:** {verdict} — {n_pass} pass / {n_fail} fail / {n_err} error / {n_skip} skip")
+
+    by_col = {"process": [0, 0, 0, 0], "outcome": [0, 0, 0, 0], "environment": [0, 0, 0, 0]}  # pass/fail/err/skip
+    for status, _, _, column in results:
+        c = column if column in by_col else "process"
+        idx = {"PASS": 0, "FAIL": 1, "ERROR": 2, "SKIP": 3}[status]
+        by_col[c][idx] += 1
+
+    out.append("| Column | PASS | FAIL | ERROR | SKIP |")
+    out.append("|---|---|---|---|---|")
+    for c, vals in by_col.items():
+        out.append(f"| {c} | {vals[0]} | {vals[1]} | {vals[2]} | {vals[3]} |")
     out.append("")
-    out.append("| Status | Assertion | Detail |")
+
+    process_fail = by_col["process"][1] + by_col["process"][2]
+    verdict = "PASS" if process_fail == 0 else "FAIL"
+    out.append(f"**Process-column verdict (the agent's responsibility):** **{verdict}** "
+               f"({by_col['process'][0]}/{sum(by_col['process'][:2])} pass, "
+               f"{by_col['process'][2]} error)")
+    out.append("")
+    out.append("> ⚠ **n=1 — exploratory only, not a measurement.** Per playbook § 8, single-trial pass/fail is uninformative as a rate. Run the same case ≥25× via `runner.sh` for a Wilson 95% CI.")
+    out.append("")
+    out.append("| Status | Column | Assertion | Detail |")
+    out.append("|---|---|---|---|")
+    for status, name, detail, column in results:
+        out.append(f"| {status} | {column} | `{name}` | {detail} |")
+    return "\n".join(out)
+
+
+def fmt_ci(rate, lo, hi):
+    if rate is None:
+        return "n/a"
+    return f"{rate:.3f} [{lo:.3f}, {hi:.3f}]"
+
+
+def render_aggregate(rows, case_id, n_trials, paraphrase=None):
+    out = []
+    out.append(f"# Eval scorecard (aggregate): `{case_id}`")
+    out.append("")
+    out.append(f"**Trials:** {n_trials}")
+    if paraphrase:
+        out.append(f"**Paraphrase:** `{paraphrase}`")
+    out.append("")
+    out.append("> Per playbook § 8 reporting unit: `<rate> [<lo>, <hi>] (Wilson 95%, n=N)`")
+    out.append("")
+
+    by_col_rate = {"process": [], "outcome": [], "environment": []}
+    for r in rows:
+        col = r["column"] if r["column"] in by_col_rate else "process"
+        if r["rate"] is not None:
+            by_col_rate[col].append(r["rate"])
+
+    out.append("## Headline rates by column")
+    out.append("")
+    out.append("| Column | Mean assertion pass-rate | # assertions |")
     out.append("|---|---|---|")
-    for status, name, detail in results:
-        out.append(f"| {status} | `{name}` | {detail} |")
+    for col, rates in by_col_rate.items():
+        if rates:
+            mean = sum(rates) / len(rates)
+            out.append(f"| {col} | {mean:.3f} | {len(rates)} |")
+        else:
+            out.append(f"| {col} | n/a | 0 |")
+    out.append("")
+    out.append("(Assertion-level rates and CIs in detail table below.)")
+    out.append("")
+    out.append("## Per-assertion detail")
+    out.append("")
+    out.append("| Column | Assertion | k/n | Wilson 95% CI | Skips | Errors |")
+    out.append("|---|---|---|---|---|---|")
+    for r in sorted(rows, key=lambda x: (x["column"], x["name"])):
+        out.append(f"| {r['column']} | `{r['name']}` | {r['k']}/{r['n']} | "
+                   f"{fmt_ci(r['rate'], r['ci_lo'], r['ci_hi'])} | {r['skips']} | {r['errors']} |")
     return "\n".join(out)
 
 
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("case", help="Eval case path, e.g. ingestion/tafi_2025")
-    p.add_argument("--run", required=True, help="Directory containing the captured run")
-    p.add_argument("--manifest", help="Override manifest path (defaults to <run>/manifest.json)")
+    p.add_argument("--run", help="Single-trial run directory")
+    p.add_argument("--trials", help="Multi-trial directory containing per-trial subdirs")
+    p.add_argument("--paraphrase", help="Filter trials to a single paraphrase id (multi-trial only)")
+    p.add_argument("--manifest", help="Override manifest path (single-trial only)")
     args = p.parse_args()
 
     repo_root = Path(__file__).resolve().parent
@@ -295,34 +493,45 @@ def main():
     if not case_dir.is_dir():
         print(f"ERROR: case dir not found: {case_dir}", file=sys.stderr)
         return 2
-
     expected = load_json(case_dir / "expected.json")
-    run_dir = Path(args.run).resolve()
 
-    envelope_path = run_dir / "ingestion_final_envelope.json"
-    if not envelope_path.exists():
-        print(f"ERROR: envelope not found at {envelope_path}", file=sys.stderr)
-        return 2
-    envelope_str = envelope_path.read_text()
-    envelope = json.loads(envelope_str)
+    if args.run and not args.trials:
+        run_dir = Path(args.run).resolve()
+        results = score_one_trial(
+            expected, run_dir,
+            Path(args.manifest) if args.manifest else None,
+        )
+        manifest_present = (Path(args.manifest) if args.manifest else (run_dir / "manifest.json")).exists()
+        print(render_single_trial(results, expected["case_id"], run_dir, manifest_present))
+        n_proc_fail = sum(1 for s, _, _, c in results if s in ("FAIL", "ERROR") and c == "process")
+        return 0 if n_proc_fail == 0 else min(n_proc_fail, 1)
 
-    manifest_path = Path(args.manifest) if args.manifest else (run_dir / "manifest.json")
-    manifest = load_json(manifest_path) if manifest_path.exists() else None
+    if args.trials:
+        trials_dir = Path(args.trials).resolve()
+        if not trials_dir.is_dir():
+            print(f"ERROR: trials dir not found: {trials_dir}", file=sys.stderr)
+            return 2
+        trial_dirs = sorted([p for p in trials_dir.iterdir() if p.is_dir()])
+        if args.paraphrase:
+            trial_dirs = [p for p in trial_dirs if args.paraphrase in p.name]
+        if not trial_dirs:
+            print(f"ERROR: no trial subdirs found in {trials_dir}"
+                  + (f" matching paraphrase {args.paraphrase!r}" if args.paraphrase else ""),
+                  file=sys.stderr)
+            return 2
+        all_results = [score_one_trial(expected, td) for td in trial_dirs]
+        rows = aggregate_trials(all_results)
+        print(render_aggregate(rows, expected["case_id"], len(trial_dirs), args.paraphrase))
 
-    results = []
-    score_envelope(expected, envelope, results)
-    score_envelope_format(expected, envelope_str, results)
-    score_outputs(expected, run_dir, results, manifest)
-    score_manifest(expected, manifest, results)
-    score_quality_flags(expected, manifest, results)
-    score_reconciliations(expected, manifest, results)
-    score_discipline(expected, run_dir, results)
+        # Exit code: 1 if any process-column rate is below 1.0 with statistical confidence
+        # (i.e., upper CI bound < 1.0). This is the conservative gate.
+        proc_fail = sum(1 for r in rows
+                        if r["column"] == "process" and r["rate"] is not None
+                        and (r["ci_hi"] is not None and r["ci_hi"] < 1.0))
+        return 0 if proc_fail == 0 else 1
 
-    scorecard = render_scorecard(results, expected["case_id"], run_dir, manifest is not None)
-    print(scorecard)
-
-    n_fail = sum(1 for r in results if r[0] in ("FAIL", "ERROR"))
-    return 0 if n_fail == 0 else min(n_fail, 1)
+    print("ERROR: must pass either --run (single-trial) or --trials (aggregate)", file=sys.stderr)
+    return 2
 
 
 if __name__ == "__main__":

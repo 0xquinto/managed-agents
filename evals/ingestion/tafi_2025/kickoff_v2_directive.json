@@ -1,0 +1,9 @@
+{
+  "type": "user",
+  "paraphrase_id": "v2_directive",
+  "paraphrase_note": "More directive tone; explicit field labels; same construct, different phrasing.",
+  "message": {
+    "role": "user",
+    "content": "Process contract `tafi_2025` per your standard ingestion contract.\n\nInputs:\n- PDF: /mnt/session/uploads/input/tafi_2025/Borrador de EF 2025 - Financiera Tafi - MICI.pdf\n- CSV: /mnt/session/uploads/input/tafi_2025/Cartera Total TAFI.csv\n\nOutputs go to /mnt/session/out/tafi_2025/.\n\nReply with only the final envelope JSON."
+  }
+}

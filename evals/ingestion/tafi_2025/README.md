@@ -23,8 +23,21 @@ The agent is given a 39-page Spanish-language NIIF/IFRS audited financial statem
 - **Captured run:** `runs/2026-04-30T18-40-29Z-poc/smoke/`
 - **Agent:** `insignia_ingestion` v1 (`agent_011CaaVZBRsEyuN4hXWMRR4Z`)
 - **Session:** `sesn_011CaacsF6hNQ5GJPNQMie2E`
-- **Verified by:** manual review of `ingestion_run_log.md` + the final envelope + the manifest's quality flags
+- **Verified by:** ⚠ model-authored from the captured envelope; awaiting Benevolent Dictator (user) sign-off per playbook § 8 before measurement claims can be made.
+
+## Files in this slice
+
+| File | Purpose | Required |
+|---|---|---|
+| `spec.md` | Bean's-8 construct-validity worksheet | Yes |
+| `factsheet.md` | Eval Factsheet header (auto-updated by runner) | Yes |
+| `expected.json` | Ground-truth assertions (column-tagged) | Yes |
+| `kickoff_v1_canonical.json` | Canonical kickoff phrasing | Yes |
+| `kickoff_v2_directive.json` | Directive paraphrase | Required by playbook § 8 (≥3) |
+| `kickoff_v3_terse.json` | Terse paraphrase | Required by playbook § 8 (≥3) |
+| `kickoff_v4_conversational.json` | Conversational paraphrase | Required by playbook § 8 (≥3) |
+| `README.md` | This file (orientation) | Yes |
 
 ## Re-using the platform resources
 
-The captured session and its files are still alive on the platform (verified post-run). The eval `runner.sh` can either re-use them via the IDs above or upload fresh copies — both modes are supported.
+The captured session and its files are still alive on the platform (verified post-run). The eval `runner.sh` (next PR) can either re-use them via the IDs above or upload fresh copies — both modes are supported.

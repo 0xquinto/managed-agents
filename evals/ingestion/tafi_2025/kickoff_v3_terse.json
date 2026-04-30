@@ -1,0 +1,9 @@
+{
+  "type": "user",
+  "paraphrase_id": "v3_terse",
+  "paraphrase_note": "Terse / telegraphic; tests whether the agent can infer from minimal phrasing.",
+  "message": {
+    "role": "user",
+    "content": "Run ingestion on contract tafi_2025. PDF + CSV at /mnt/session/uploads/input/tafi_2025/. Output dir: /mnt/session/out/tafi_2025/. Final envelope JSON only."
+  }
+}
