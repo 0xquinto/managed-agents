@@ -17,7 +17,7 @@
 | Field | Value |
 |---|---|
 | Source | Captured from `runs/2026-04-30T18-40-29Z-poc/smoke/` (production-shaped POC) |
-| Items | 1 case × ≥3 paraphrases (target n=25/paraphrase = 75 trials/version) |
+| Items | 1 case × ≥3 paraphrases. Decision-sized n: 10 paired for A/B regression detection; 25/paraphrase only for variance characterization. See `spec.md` § 6. |
 | Item-quality audit | PENDING — user has not yet signed off as Benevolent Dictator |
 | `expected.json` content sha256 | (auto-filled by runner) |
 | Frozen at | 2026-04-30 |
@@ -43,7 +43,7 @@
 | Score columns | `process` / `outcome` / `environment` reported separately |
 | Reporting unit | `<rate> [<lo>, <hi>] (Wilson 95%, n=N)` |
 | MDE pre-registered | Δ ≥ 0.20 for headline A/B claims |
-| Power | ~90% for Δ=0.20 at n=75 (per playbook § 9 — Miller arXiv:2411.00640) |
+| Power | Decision-sized — n=10 paired McNemar detects ≥3 regression at α=0.05 (the typical decision); n=75 reserved for headline-publication precision |
 | Multiplicity | Bonferroni by default; Holm-Bonferroni or BH if k ≥ 4 |
 | Paired tests | McNemar's exact for binary; Wilcoxon signed-rank for ordinal |
 | Judge model | n/a (no LLM-judge in this slice) |
@@ -60,8 +60,8 @@
   --agent-id agent_011CaaVZBRsEyuN4hXWMRR4Z \
   --env-id env_01WaJyfTQu9YDfQC5vXiXWj5 \
   --files file_011CaaVTNcQEKbg4Dt1vCcCF,file_011CaaVTupcqW1ZuPvi63z1M \
-  --paraphrases all \
-  --trials-per-paraphrase 25
+  --paraphrases v1_canonical \
+  --trials-per-paraphrase 1   # smoke; bump to 10 for A/B decisions, 25/paraphrase only when characterizing variance
 ```
 
 ## Limitations honestly reported

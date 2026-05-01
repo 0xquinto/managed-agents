@@ -13,9 +13,11 @@ Usage:
               [--timeout-seconds 900]
               [--dry-run]
 
-Defaults: 1 paraphrase × 1 trial (smoke). The full-sweep n=75 budget is opt-in
-via `--paraphrases all --trials-per-paraphrase 25` because each trial costs
-platform quota.
+Defaults: 1 paraphrase × 1 trial (smoke). For A/B regression detection, run
+each agent at --trials-per-paraphrase 10 paired (the typical decision needs
+this, not n=75). The n=25/paraphrase × all paraphrases sweep is reserved for
+characterizing paraphrase variance for a headline claim — it costs ~10 hours
+of model time and should not be the default.
 
 This script does NOT delete sessions after they complete (sessions are
 platform-cheap once idle). The trial directory becomes the durable artifact.

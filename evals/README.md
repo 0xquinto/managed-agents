@@ -61,26 +61,45 @@ Output: a markdown scorecard with per-column pass/fail counts and a per-assertio
 
 Output: per-assertion `k/n` + Wilson 95% CI, broken out by column. Exit code = 1 if any process-column assertion has CI upper bound < 1.0 (the conservative gate).
 
-### End-to-end provision-and-run (next PR)
+### End-to-end provision-and-run
 
 ```bash
-./runner.sh ingestion/tafi_2025 \
+./runner.py ingestion/tafi_2025 \
   --agent-id agent_011CaaVZBRsEyuN4hXWMRR4Z \
   --env-id env_01WaJyfTQu9YDfQC5vXiXWj5 \
-  --files file_011CaaVTNcQEKbg4Dt1vCcCF,file_011CaaVTupcqW1ZuPvi63z1M \
-  --paraphrases all \
-  --trials-per-paraphrase 25
+  --paraphrases v1_canonical \
+  --trials-per-paraphrase 1
 ```
 
-The runner provisions a fresh session per trial (or batches per the platform's session reuse rules), fires the kickoff, polls until idle, captures envelope + manifest + events, writes a per-run `manifest.json` with foundation sha + agent shas + model + temp + seed, then calls `score.py --trials`.
+The runner provisions a fresh session per trial, fires the kickoff, polls until idle, captures envelope + manifest + events, writes a per-run `manifest.json` with foundation sha + agent shas + model + temp + seed, then calls `score.py --trials`.
 
-### A/B mode (next PR)
+### Choosing N — honest
+
+The playbook headline of n=25/cell × 3 paraphrases = 75 trials assumes a **noisy near-50% baseline**. For our problem the baseline is near 100% (v1 already passes the captured trial); variance comes mostly from nondeterminism, not from intrinsic task difficulty. Wilson CIs collapse fast at p≈1.0, and our actual decision is usually binary ("did v2 break v1's baseline?"), not "what is the precise rate?" Recommended budget by goal:
+
+| Goal | Trials | Wall-clock (~8 min/trial) |
+|---|---|---|
+| Pipeline smoke (does runner work end-to-end) | 1 | ~10 min |
+| Reproducibility check on a single agent | 5 trials × 1 paraphrase | ~45 min |
+| **A/B regression detection (default decision)** | **10 trials paired × 1–2 paraphrases per side** | **~3 hr** |
+| Variance characterization (paraphrase-by-paraphrase) | 25 × 3 paraphrases | ~10 hr |
+| Public/headline claim with sub-10pp precision | 25 × 3 paraphrases × ≥2 agents | ~20 hr |
+
+Default to the smallest N that distinguishes the decision you need to make. The full sweep is for *characterizing* a difference you already saw, not for *finding* one.
+
+### A/B mode (runner re-run, scorer to be extended)
 
 ```bash
-./runner.sh ingestion/tafi_2025 --agent-id <v1>,<v2> --paraphrases all --trials-per-paraphrase 25
+# Run each agent separately into adjacent out dirs:
+./runner.py ingestion/tafi_2025 --agent-id <v1> --paraphrases v1_canonical --trials-per-paraphrase 10 --out-dir runs/ab/v1
+./runner.py ingestion/tafi_2025 --agent-id <v2> --paraphrases v1_canonical --trials-per-paraphrase 10 --out-dir runs/ab/v2
+
+# Score each, eyeball the paired comparison; programmatic McNemar's exact test ships in the next PR.
+./score.py ingestion/tafi_2025 --trials runs/ab/v1/trials
+./score.py ingestion/tafi_2025 --trials runs/ab/v2/trials
 ```
 
-Output: side-by-side per-paraphrase scorecard + paired McNemar's exact test on each assertion. Pre-register MDE in the slice spec before running.
+Pre-register the MDE in `spec.md` before running. Bonferroni-correct for multiplicity if comparing more than one assertion's rate.
 
 ## Adding a case
 
