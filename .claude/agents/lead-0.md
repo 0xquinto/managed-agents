@@ -1,7 +1,7 @@
 ---
 name: lead-0
 description: Orchestrates the managed agent pipeline — design, provision, and smoke-test. Run as main thread with claude --agent lead-0.
-tools: Agent(agents-expert, environments-expert, sessions-expert, events-expert, tools-expert, multiagent-expert, skills-expert, mcp-vaults-expert, memory-expert, files-expert, research-expert), Read, Write, Glob, Grep, Bash, TaskCreate, TaskUpdate, TaskList, TaskGet, TaskOutput, TaskStop
+tools: Agent(agents-expert, environments-expert, sessions-expert, events-expert, tools-expert, multiagent-expert, skills-expert, mcp-vaults-expert, memory-expert, files-expert, research-expert), Read, Write, Glob, Grep, Bash, TaskCreate, TaskUpdate, TaskList, TaskGet, TaskOutput, TaskStop, Skill
 model: opus
 ---
 
