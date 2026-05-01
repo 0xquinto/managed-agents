@@ -13,6 +13,7 @@ Found **8 error**, **6 warn**, **0 info** violations.
 | `R003` | warn | redundant-output-copy |
 | `R004` | warn | fresh-interpreter-undocumented |
 | `R005` | warn | json-envelope-unguarded |
+| `R006` | warn | missing-required-section |
 
 ## Violations
 
