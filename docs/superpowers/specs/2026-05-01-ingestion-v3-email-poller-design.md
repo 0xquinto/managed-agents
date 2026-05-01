@@ -433,9 +433,16 @@ Total working set well under 1 MB at year-2 volumes.
 
 ### 5.5 Cache hit math
 
-The resolver's kickoff prefix is: stable system prompt + stable tool definitions + first-user-turn `cache_control` block containing the registry (mostly stable). Cache hit applies to that prefix. Per-email cache miss is just the email-specific tail (subject, body excerpt, attachment metadata). At ~5–20 emails/day with the 1-hour TTL beta, the registry stays warm essentially all day; cold-start cost is paid at most a few times daily.
+The resolver's kickoff prefix is: stable system prompt + stable tool definitions + first-user-turn `cache_control` block containing the registry (mostly stable). Cache hit applies to that prefix. Per-email cache miss is just the email-specific tail (subject, body excerpt, attachment metadata).
 
-Ingestion's kickoff is per-contract (`contract_id`-keyed); cache hits there only fire on consecutive sessions for the same contract within TTL.
+**Two TTL tiers exist; the POC opts into the longer one.**
+
+- **5-minute TTL (GA, default).** `cache_control: {type: "ephemeral"}` with no opt-in header. Sufficient ONLY if sessions arrive < 5 min apart. At ~10–20 emails/day spread across business hours, intervals are typically 30–90 min — most sessions would be cache misses on the registry block.
+- **1-hour TTL (public beta, opt-in).** Requires BOTH `anthropic-beta: extended-cache-ttl-2025-04-11` header on the API call AND `"ttl": "1h"` inside the cache_control block: `cache_control: {type: "ephemeral", ttl: "1h"}`. Real-world inbox traffic is bursty (clusters in morning + post-lunch windows); under 1h TTL most clustered sessions hit the cache.
+
+**v1 ships with the 1h TTL opt-in.** Adds the beta header to all `ant beta:sessions:events` calls plus the explicit `ttl: 1h` field in the resolver kickoff's cache_control block. No 24h or 7-day tiers exist as of 2026-05-01 — do not assume them.
+
+Ingestion's kickoff is per-contract (`contract_id`-keyed); cache hits there only fire on consecutive sessions for the same contract within TTL. Under 1h TTL, this happens whenever a client sends back missing files within the hour — meaningful for the missing-field email-draft loop, otherwise rare.
 
 ## 6. Failure modes and error handling
 
@@ -609,7 +616,7 @@ Resolver `expected.json` per case (sketch):
   → sessions (poller's job at runtime, not Phase 3)
 ```
 
-**Gate 0a — extended-cache TTL beta.** § 5.5 and § 8.7 assume the 1-hour `cache_control` TTL beta is active on the account. If only the 5-min default is available, the registry-prefix cache will go cold between most polling cycles and the per-email cost roughly doubles. Confirm via `ant beta:agents` cache-related fields or by checking the account's beta entitlements before Phase 3. If the longer TTL is unavailable: either reduce the polling interval below 5 min (cheap), or drop the registry inlining and switch the resolver to `read`-tool consultation of `_registry.json` from the memory store (more expensive per email but architecturally cleaner under short TTL). Update § 8.7 cost math accordingly.
+**Gate 0a — extended-cache TTL opt-in.** Per § 5.5, v1 commits to the 1-hour TTL by sending `anthropic-beta: extended-cache-ttl-2025-04-11` on every session API call AND including `"ttl": "1h"` in the resolver kickoff's `cache_control` block. The base 5-min TTL is GA and works without any header; the 1h tier is a public beta requiring both opt-ins. Confirm before Phase 3: (a) the API key has access to `extended-cache-ttl-2025-04-11` (try a probe call; if 400 with unrecognized-beta error, fall back to 5-min and update § 8.7 cost math — per-email cost roughly doubles), (b) the poller's HTTP client adds the header on every relevant call, (c) the kickoff template emits the explicit `ttl: 1h` field. This is a code change + entitlement check, not a feature-availability wait.
 
 **Gate 0b — `/mnt/memory/` mount-path convention.** § 4.4 (`memory_paths` blob in `IngestionKickoff`), § 5.1 (memory-store layout), and the resolver/ingestion prompt drafts will all hardcode this prefix. If the actual platform convention is `/mnt/memory/<store_name>/` (or anything else), the agent prompts have wrong paths and `read` calls fail silently. Confirm with `memory-expert` grounding plus a live `ant beta:sessions create --help` check before any prompt drafting. Update §§ 4.4 and 5.1 if the convention differs from the assumed `/mnt/memory/`.
 
@@ -617,7 +624,7 @@ Phase 3 finishes when the agent + memory store + vault exist; Phase 4 (smoke) ru
 
 ### 8.3 Scope guardrails — explicitly NOT in v1
 
-- **No coordinator / multi-agent team wiring.** v1 is two single-agent definitions invoked sequentially by the poller. The `callable_agents` research-preview gate that bit the v1 POC is a non-issue here because orchestration lives outside the platform.
+- **No coordinator / multi-agent team wiring.** v1 is two single-agent definitions invoked sequentially by the poller. The `callable_agents` field on `agents.create/update` is access-gated per API key (Anthropic must grant research-preview access; until then the field returns `Extra inputs are not permitted` regardless of beta header value — the v1 POC's "find the right header" theory was incorrect). This is a non-issue for our architecture because orchestration lives outside the platform: the poller chains resolver → ingestion via fresh sessions, which is architecturally adjacent to Anthropic's production-canonical pattern (`session.status_idled` webhook → poller dispatches the next session). v2 evolution path: migrate the chain to `session.status_idled` webhook events instead of polling for terminated sessions; this requires no `callable_agents` access and is the documented production approach.
 - **No transversal / bespoke / synthesis agents.** v1 stops at "ingestion produces a manifest the human can act on, the email loop is closed."
 - **No webhooks.** Polling only. Webhook latency upgrade is a v2 enhancement.
 - **No production deployment of the poller.** The POC poller runs as a local cron OR a single Azure Function instance, not a hardened production service. Auth/secret rotation, observability, retries, deployment topology are explicit follow-ups.
