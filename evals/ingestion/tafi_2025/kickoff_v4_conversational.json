@@ -1,0 +1,9 @@
+{
+  "type": "user",
+  "paraphrase_id": "v4_conversational",
+  "paraphrase_note": "Conversational / verbose; closer to how a non-engineer might phrase the request.",
+  "message": {
+    "role": "user",
+    "content": "Hey — I need you to ingest a contract for me. The contract id is `tafi_2025`. There's a PDF (Borrador de EF 2025 - Financiera Tafi - MICI.pdf) and a CSV (Cartera Total TAFI.csv) sitting at /mnt/session/uploads/input/tafi_2025/. Please follow your normal ingestion procedure, write the normalized outputs under /mnt/session/out/tafi_2025/, and respond with just the final envelope JSON. Thanks!"
+  }
+}

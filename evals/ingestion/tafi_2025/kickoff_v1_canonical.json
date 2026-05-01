@@ -1,0 +1,7 @@
+{
+  "type": "user",
+  "message": {
+    "role": "user",
+    "content": "Ingest contract `tafi_2025`. Files are at:\n- PDF: /mnt/session/uploads/input/tafi_2025/Borrador de EF 2025 - Financiera Tafi - MICI.pdf\n- CSV: /mnt/session/uploads/input/tafi_2025/Cartera Total TAFI.csv\n\nFollow your contracted ingestion procedure. Write outputs under /mnt/session/out/tafi_2025/. Return the final envelope only."
+  }
+}
