@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Insignia ingestion v3 email-driven poller. See docs/superpowers/specs/2026-05-01-ingestion-v3-email-poller-design.md."
 requires-python = ">=3.13,<3.14"
 dependencies = [
-    "pydantic>=2.7,<3",
+    "pydantic[email]>=2.7,<3",
     "msgraph-sdk>=1.6,<2",
     "azure-identity>=1.17,<2",
     "anthropic>=0.30,<1",
