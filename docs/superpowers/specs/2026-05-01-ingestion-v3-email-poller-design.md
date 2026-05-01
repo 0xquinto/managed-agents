@@ -659,3 +659,79 @@ These are deliberately deferred from this spec — they affect implementation, n
 - What's the exact convention for `INS-<year>-<NNN>` ordinal allocation under concurrent polls? (Likely a single-writer poller for v1; concurrent-safe ID minting is a v2 problem.)
 - Should the `tone_examples/` corpus be Spanish-only, or include English examples for clients outside LatAm? (v1 says Spanish-only; v2 reconsiders if client mix changes.)
 - Adaptive Card schema for the Teams cards (Section 2.3 deferred this; implementation plan picks a concrete schema).
+
+## 10. Demo plan
+
+### 10.1 Stance: demo IS the production smoke run
+
+A faked demo (scripted poller, pre-staged Teams cards, mocked Graph) is cheaper to build but builds nothing. Insignia's first held-out eval case (§ 8.4 Gate 3) wants to *be* this demo: same poller, same agents, same Microsoft 365 tenant, same code path. Synthetic contracts substitute for unknown real clients; everything else is real.
+
+This means:
+
+- **One Microsoft 365 tenant** (Insignia's, or a dedicated demo tenant in the same trust posture). No sandbox-vs-production split. The Graph app registration, OneDrive folders, Teams channels, and inbox used in the demo are the ones the system will use on the next real onboarding.
+- **One poller deployment.** Whatever runs the demo is what runs the next contract. A switch from "demo mode" to "production mode" is a config flag (which inbox to watch, which Teams team to post into), not a code path.
+- **Demo failures are real failures.** If the demo cracks, that's a real bug — not a "the demo broke, but production is fine" deflection.
+
+This raises the cost of the demo by ~2–3 weeks of Graph plumbing work that a fake demo would skip. It saves ~2–3 weeks of "now make it real" rebuild work that a fake demo would force later.
+
+### 10.2 Three demonstration contracts
+
+| Contract | Source | Role in the demo |
+|---|---|---|
+| **Tafi 2025** | Real client data (existing POC capture) | Anchor. The agent's domain flags (going-concern, UTF-8 mojibake, biweekly-snapshot caveat) are unfakeable proof that the agent is doing real work, not pattern-matching. |
+| **Synthetic Contract B** | Fake LatAm SME, Spanish-language, P&L + balance sheet provided, **`cashflow_2024` deliberately absent** | Triggers the `client_email_draft` path — the headline moment. Spanish follow-up materializes in Teams; presenter clicks Approve; email goes out via Graph in front of the audience. |
+| **Synthetic Contract C** | Fake email from `advisor@<consultant_domain>.com` forwarding files for "Cliente XYZ" | Triggers the resolver-triage path. Card lands in `#contracts-triage` live; presenter resolves it; next session fires automatically. |
+
+**Tafi exposure caveat.** Showing Tafi to anyone besides Insignia themselves needs explicit Tafi consent. If the demo audience is non-Insignia (investors, partners, sales), Tafi must be either redacted or replaced with a fourth synthetic contract designed to surface the same domain flags (negative equity, encoding corruption, snapshot caveat). This decision precedes synthetic-data authoring — the answer changes whether two or three synthetic contracts are needed.
+
+### 10.3 Synthetic-data authoring
+
+Not free. Estimated ~2 days of authoring per contract:
+
+- **Fictional company name + tax ID.** Avoid collision with real registered companies (verify against any public registry the audience might check).
+- **Financial statement PDF.** Built off the Tafi statement template but with different line items, periods, and amounts. ~30–40 pages, NIIF/IFRS structure, Spanish. The supersession-test variant (used in resolver eval) is byte-identical to the canonical version; the missing-cashflow-2024 variant is the demo input.
+- **Loan portfolio CSV (for Contracts B and C if applicable).** Same 24-column schema as Tafi's `Cartera Total TAFI.csv`, ~50k–150k rows of fake biweekly snapshot data. Generate procedurally; do not copy Tafi's actual rows with names changed (PII risk plus regulatory weirdness).
+- **Email bodies + threading.** Spanish, business-casual, signature blocks. Realistic enough to test the resolver's `body_text` heuristics; not so polished that the audience suspects AI authorship of the demo material itself.
+
+Authoring lives under `evals/ingestion/<synthetic_id>/` and `evals/resolver/<synthetic_id>/` so the demo data is also eval data. Each synthetic contract gets a Bean's-8 `spec.md` and a `factsheet.md` per § 7. **Synthetic data that doesn't pass the eval framework's construct-validity check doesn't ship.**
+
+### 10.4 Demo arc (≈10 minutes)
+
+The arc is a single take, not a slide deck. Each beat is timed to the system actually running.
+
+1. **Open with the pain (1 min).** Pull up the diagnostic's lead-time chart (`docs/contracts/Insignia/diagnostics/insignia_diagnostics.md` § 3, the 5–12 day table). One sentence: "Today, between client email and modeling-ready data, this is 5–12 days, almost all of it manual. Watch."
+2. **Show the inbox (30s).** A real Outlook inbox view of `contracts@<demo_domain>` with three unread emails staged: Tafi update, synthetic Contract B initial, synthetic Contract C ambiguous-forward.
+3. **Run one scheduler tick live (90s).** Poller fires. Logs scroll on screen. EmailGate decisions visible (Contract A passes, Contract B passes, Contract C passes — none rejected today; rejection is its own demo if time permits).
+4. **Watch Teams light up (90s).** Three channels populate concurrently: Tafi posts "ingestion complete, manifest at <link>"; Contract B posts the `client_email_draft` Approve/Edit/Reject card; `#contracts-triage` posts Contract C's resolver question.
+5. **The headline moment (2 min).** Open Contract B's Teams channel. Read the Spanish draft aloud. Click Approve. Show the email landing in the synthetic client's inbox in real time. Total elapsed: from "email arrived" to "follow-up sent" is now under 3 minutes vs. the 2–3 day "Interaction" row of the diagnostic.
+6. **Resolve the triage (1 min).** Click into `#contracts-triage`. Read the resolver's question. Pick "new contract — client name X." Show the new OneDrive folder + Teams channel materializing live. Show the registry growing by one row.
+7. **Close with the manifest (2 min).** Open Tafi's `manifest.json`. Show the going-concern flag. Show the UTF-8 mojibake count. Show the snapshot caveat. "Four days of human work. Ninety seconds of agent work. Every flag here is something a human would have caught — eventually. The agent caught all of them on the first read."
+8. **Honest close (1 min).** "Modeling and synthesis are still manual. This POC closes the intake loop only. The next milestone is automating the transversal modeling — that's a different agent, different design, not part of today's demo."
+
+### 10.5 Failure-mode demos (optional, time-permitting)
+
+Drop in if the demo audience is technical or skeptical:
+
+- **Supersession skip.** Re-send Contract B's same attachments. EmailGate logs `duplicate-bundle`. No session spawned. Contract B's Teams channel gets a one-line "ignored duplicate update" note. Demonstrates the system has *taste*.
+- **Resolver malformation.** Pre-stage a resolver session with a deliberately broken kickoff. Show the poller demoting to triage with `rationale_short: "resolver malformed output"`. Demonstrates the system fails safely.
+- **Send-mail bounce.** Configure Contract B's recipient address to bounce. After Approve, show the failure card with the bounce reason and the dead-letter retry surface.
+
+These are not core to the arc. Use them only if the audience is asking "what about errors?"
+
+### 10.6 Demo prerequisites
+
+Hard prerequisites before any demo can run, in dependency order:
+
+1. **Tenant and inbox.** Microsoft 365 tenant identified; `contracts@<domain>` inbox provisioned; Graph app registration completed with the § 2.4 permission set; client secret in `insignia_graph_credentials` vault.
+2. **Tafi consent decision.** Audience scoped → Tafi inclusion approved or substituted.
+3. **Synthetic contracts authored.** B and C (and optionally a Tafi-substitute) shipped under `evals/ingestion/<id>/` and `evals/resolver/<id>/` with passing Bean's-8 worksheets.
+4. **Tone seed corpus.** 1–2 hand-authored Spanish follow-up examples in `tone_examples/`. Without these the headline moment produces text that sounds like AI; with them it sounds like Insignia.
+5. **Poller deployed.** Cron or Azure Function timer, hitting the demo inbox on a 1–2 minute interval (faster than the 5-min default, for demo-pace reasons).
+6. **Dry-run rehearsal.** Run the full arc against the demo data at least 3 times in a row before the live demo. Catch the timing bugs (Teams card-render latency varies by 5–30 seconds).
+
+### 10.7 Out of scope for the demo plan
+
+- Recording / livestream production logistics.
+- Investor-deck materials wrapping the demo.
+- Localization to English or Portuguese (Spanish-only for v1; the diagnostic is LatAm-anchored).
+- A "what if the demo fails" backup plan beyond the dry-run rehearsal — if rehearsal can't get to 3 consecutive clean runs, the demo isn't ready.
