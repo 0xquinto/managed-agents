@@ -1,0 +1,46 @@
+{
+  "_comment": "Per-case mount layout for the transversal_modeler role. Inputs are upstream (ingestion-shaped) artifacts: normalized CSVs + manifest JSON. The runner reads this to construct the session_resources array.",
+  "files": [
+    {
+      "file_id_param": "tafi_pnl_csv",
+      "mount_path": "out/tafi_2025/normalized/pnl_raw.csv",
+      "fixture_local_path": "fixtures/pnl_raw.csv",
+      "description": "Synthesized normalized P&L (period, account, amount)"
+    },
+    {
+      "file_id_param": "tafi_balance_csv",
+      "mount_path": "out/tafi_2025/normalized/balance_raw.csv",
+      "fixture_local_path": "fixtures/balance_raw.csv",
+      "description": "Synthesized normalized balance sheet"
+    },
+    {
+      "file_id_param": "tafi_cashflow_csv",
+      "mount_path": "out/tafi_2025/normalized/cashflow_raw.csv",
+      "fixture_local_path": "fixtures/cashflow_raw.csv",
+      "description": "Synthesized normalized cash flow"
+    },
+    {
+      "file_id_param": "tafi_entity_json",
+      "mount_path": "out/tafi_2025/normalized/entity.json",
+      "fixture_local_path": "fixtures/entity.json",
+      "description": "Entity metadata (name, fiscal year, currency)"
+    },
+    {
+      "file_id_param": "tafi_assumptions_md",
+      "mount_path": "out/tafi_2025/normalized/assumptions.md",
+      "fixture_local_path": "fixtures/assumptions.md",
+      "description": "Narrative assumptions / risk notes"
+    },
+    {
+      "file_id_param": "tafi_manifest_json",
+      "mount_path": "out/tafi_2025/manifest.json",
+      "fixture_local_path": "fixtures/manifest.json",
+      "description": "Ingestion manifest with reconciliations + quality_flags"
+    }
+  ],
+  "container_paths_to_capture": [
+    "/mnt/session/out/tafi_2025/model.xlsx"
+  ],
+  "_note_on_mount_paths": "Per sessions-expert.md: type=file resources are auto-prefixed with /mnt/session/uploads/. So fixtures land at /mnt/session/uploads/out/tafi_2025/... — kickoff prompts must reference those absolute paths.",
+  "_note_on_fixtures": "fixture_local_path is a runner-only field (not part of the session_resources API). The runner uploads each fixture file via `ant beta:files upload`, captures the file_id, then constructs the session_resources with the file_id and mount_path. Synthesized values; assertions target structure, not numbers."
+}

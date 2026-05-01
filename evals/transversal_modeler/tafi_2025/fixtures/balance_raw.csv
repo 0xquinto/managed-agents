@@ -1,0 +1,33 @@
+period,account,amount
+2024,Cash,200000000
+2024,Receivables,1500000000
+2024,Inventory,0
+2024,Other Current Assets,50000000
+2024,PP&E,80000000
+2024,Intangibles,20000000
+2024,Other Non-current Assets,30000000
+2024,Total Assets,1880000000
+2024,Payables,80000000
+2024,Short-term Debt,700000000
+2024,Other Current Liabilities,40000000
+2024,Long-term Debt,950000000
+2024,Other Non-current Liabilities,20000000
+2024,Total Liabilities,1790000000
+2024,Equity,90000000
+2024,Total Liab + Equity,1880000000
+2025,Cash,150000000
+2025,Receivables,1900000000
+2025,Inventory,0
+2025,Other Current Assets,60000000
+2025,PP&E,100000000
+2025,Intangibles,25000000
+2025,Other Non-current Assets,40000000
+2025,Total Assets,2275000000
+2025,Payables,110000000
+2025,Short-term Debt,1100000000
+2025,Other Current Liabilities,65000000
+2025,Long-term Debt,1050000000
+2025,Other Non-current Liabilities,30000000
+2025,Total Liabilities,2355000000
+2025,Equity,-80000000
+2025,Total Liab + Equity,2275000000

@@ -1,0 +1,48 @@
+{
+  "contract_id": "tafi_2025",
+  "entity": {
+    "name": "Financiera Tafi S.A.",
+    "fiscal_year": "December",
+    "currency": "ARS"
+  },
+  "periods": ["2024", "2025"],
+  "pdf_extraction": {
+    "method": "pdfplumber",
+    "pages": 39,
+    "avg_chars_per_page": 1850
+  },
+  "csv_extraction": {
+    "rows": 142000,
+    "cols": 24
+  },
+  "files_classified": [
+    { "path": "input/tafi_2025/Borrador de EF 2025 - Financiera Tafi - MICI.pdf", "type": "financial_statement", "confidence": 0.97 },
+    { "path": "input/tafi_2025/Cartera Total TAFI.csv", "type": "loan_portfolio", "confidence": 0.99 }
+  ],
+  "normalized_paths": {
+    "pnl": "/mnt/session/out/tafi_2025/normalized/pnl_raw.csv",
+    "balance": "/mnt/session/out/tafi_2025/normalized/balance_raw.csv",
+    "cashflow": "/mnt/session/out/tafi_2025/normalized/cashflow_raw.csv"
+  },
+  "quality_flags": [
+    { "severity": "error", "message": "2025 equity is negative (-80M ARS); going-concern flag", "category": "going_concern" },
+    { "severity": "warn", "message": "9.2% of CSV Cliente field has UTF-8 mojibake", "category": "encoding_issue" },
+    { "severity": "warn", "message": "Portfolio CSV is cumulative biweekly snapshots — naive aggregation overcounts", "category": "snapshot_series_caveat" },
+    { "severity": "warn", "message": "Net Income deteriorated 98x YoY (104M → 40.3M after interest expense surge)", "category": "going_concern" },
+    { "severity": "info", "message": "Interest expense grew 72% YoY vs revenue 21% growth", "category": "leverage_pressure" }
+  ],
+  "reconciliations": {
+    "balance_sheet_2025": { "diff": 0.0, "balanced": true },
+    "balance_sheet_2024": { "diff": 0.0, "balanced": true },
+    "cashflow_2025": { "diff": 0.0, "reconciled": true },
+    "cashflow_2024": { "diff": 0.0, "reconciled": true }
+  },
+  "missing_fields": [],
+  "outputs": [
+    { "path": "/mnt/session/out/tafi_2025/normalized/pnl_raw.csv", "format": "csv" },
+    { "path": "/mnt/session/out/tafi_2025/normalized/balance_raw.csv", "format": "csv" },
+    { "path": "/mnt/session/out/tafi_2025/normalized/cashflow_raw.csv", "format": "csv" },
+    { "path": "/mnt/session/out/tafi_2025/normalized/entity.json", "format": "json" },
+    { "path": "/mnt/session/out/tafi_2025/normalized/assumptions.md", "format": "text" }
+  ]
+}

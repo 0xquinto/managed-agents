@@ -1,0 +1,67 @@
+{
+  "case_id": "transversal_modeler/tafi_2025",
+  "schema_version": 1,
+  "slice_version": "0.1.0",
+  "description": "Frozen ground-truth assertions for any agent in the transversal_modeler role processing the Tafi 2025 normalized output. Demonstrates scaffold reusability across roles. Status: scaffold-only (agent not yet provisioned).",
+
+  "envelope": [
+    { "field": "status", "type": "exact", "value": "ok", "column": "process",
+      "rationale": "agent must signal a successful build" },
+    { "field": "model_path", "type": "exact", "value": "/mnt/session/out/tafi_2025/model.xlsx", "column": "process",
+      "rationale": "downstream bespoke_modeler reads from this exact path" },
+    { "field": "transversal_sheets", "type": "contains", "values": ["P&L", "Balance Sheet", "Cash Flow", "Valuation"], "column": "process",
+      "rationale": "the four-sheet contract is the role's definition" }
+  ],
+
+  "envelope_format": [
+    { "type": "no_markdown_fences", "column": "process",
+      "rationale": "envelope must be raw JSON parseable by the coordinator without stripping fences" },
+    { "type": "no_surrounding_prose", "column": "process",
+      "rationale": "the agent's final message is the envelope and nothing else" }
+  ],
+
+  "outputs": [
+    { "type": "file_exists_and_nonempty", "path": "/mnt/session/out/tafi_2025/model.xlsx", "format": "binary", "column": "outcome",
+      "rationale": "the contracted workbook must exist and be > 0 bytes — defeats empty-stub masking" }
+  ],
+
+  "xlsx_structure": {
+    "path": "/mnt/session/out/tafi_2025/model.xlsx",
+    "sheets": [
+      { "type": "xlsx_sheet_exists", "name": "P&L", "column": "outcome",
+        "rationale": "first of the four required transversal sheets" },
+      { "type": "xlsx_sheet_exists", "name": "Balance Sheet", "column": "outcome" },
+      { "type": "xlsx_sheet_exists", "name": "Cash Flow", "column": "outcome" },
+      { "type": "xlsx_sheet_exists", "name": "Valuation", "column": "outcome" },
+      { "type": "xlsx_sheet_exists", "name": "Assumptions", "column": "outcome",
+        "rationale": "TODO(bespoke) defaults land here per the prompt's Rules section" }
+    ],
+    "named_ranges": [
+      { "type": "xlsx_named_range_exists", "name": "industry_benchmarks", "column": "process",
+        "rationale": "bespoke_modeler depends on this named range surviving the transversal build; killing it via xlsx-skill writes is a real failure mode flagged in the prompt" },
+      { "type": "xlsx_named_range_exists", "name": "bespoke_assumptions", "column": "process",
+        "rationale": "same — bespoke_modeler reads from here" }
+    ],
+    "validation_cells": [
+      { "type": "xlsx_validation_cell", "sheet": "P&L", "expected_value": "OK", "column": "outcome",
+        "rationale": "P&L must reconcile within tolerance (0.01 of reporting unit)" },
+      { "type": "xlsx_validation_cell", "sheet": "Balance Sheet", "expected_value": "OK", "column": "outcome",
+        "rationale": "balance sheet must balance" },
+      { "type": "xlsx_validation_cell", "sheet": "Cash Flow", "expected_value": "OK", "column": "outcome",
+        "rationale": "cashflow ending cash must tie to balance sheet cash" }
+    ]
+  },
+
+  "validation_envelope_field": [
+    { "field": "validation.pnl", "type": "exact", "value": "OK", "column": "outcome" },
+    { "field": "validation.balance", "type": "exact", "value": "OK", "column": "outcome" },
+    { "field": "validation.cashflow", "type": "exact", "value": "OK", "column": "outcome" }
+  ],
+
+  "discipline": [
+    { "type": "no_error_events", "column": "environment",
+      "rationale": "is_error events typically come from tool/platform errors" },
+    { "type": "stop_reason", "value": "end_turn", "column": "process",
+      "rationale": "agent must terminate cleanly" }
+  ]
+}

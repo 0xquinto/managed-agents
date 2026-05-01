@@ -1,0 +1,7 @@
+{
+  "type": "user",
+  "message": {
+    "role": "user",
+    "content": "Model tafi_2025. Normalized at /mnt/session/uploads/out/tafi_2025/normalized/, manifest at /mnt/session/uploads/out/tafi_2025/manifest.json. Output: /mnt/session/out/tafi_2025/model.xlsx."
+  }
+}
