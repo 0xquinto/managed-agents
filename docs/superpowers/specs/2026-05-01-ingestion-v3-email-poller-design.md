@@ -97,7 +97,7 @@ The poller is the system's load-bearing component. This section is architectural
 | Component | Responsibility |
 |---|---|
 | **Scheduler** | Runs the poller on an interval. Cron / Azure Function timer / GitHub Action schedule. Default N = 5 min. |
-| **MailFeed** | Reads new mail from the watched inbox via Graph `/me/mailFolders/Inbox/messages?$filter=receivedDateTime gt <last_seen>`. Maintains `mail_cursor` in the memory store. |
+| **MailFeed** | Reads new mail via Graph delta query: `GET /me/mailFolders/Inbox/messages/delta`. Persists the returned `deltaLink` URL in `mail_cursor.json`. Delta queries handle moves/edits correctly and avoid the race where two messages arrive in the same second (which a `receivedDateTime gt <last_seen>` filter would silently truncate). |
 | **EmailGate** | Five-stage filter that decides whether to spawn (§ 2.2). Output: `(spawn, reason, ResolverKickoff)`. |
 | **ResolverStep** | Creates a managed-agent session against `insignia_resolver`, kickoff = `ResolverKickoff`. Reads the resolver's envelope. |
 | **AttachmentStager** | Downloads email attachments via Graph, uploads to `OneDrive/Contracts/<client>/raw/<message_id>/`. Re-uploads as session resources for the ingestion session. Updates `seen_attachments`. |
@@ -142,10 +142,10 @@ Stages 1–4 are pure poller logic, zero managed-agent cost. Semantic supersessi
 
 When the poller posts a card, the card carries a callback ID. Two ways to capture the human response:
 
-- **Option A (preferred for v2)** — Adaptive Card with action buttons that POST to a tiny webhook on the poller side. Latency in seconds.
-- **Option B (v1 fallback)** — poller polls the Teams channel for replies on the card. Latency = poll interval. Cheaper to build.
+- **Option A (v2 — Adaptive Card with action buttons)** — card uses `Action.Execute` (or `Action.Submit`) buttons. Button clicks become bot invoke activities, which require a **registered bot** in the Teams app catalog and a public HTTPS endpoint to receive the activity. Latency in seconds, but the bot registration is meaningful overhead.
+- **Option B (v1 — plain-message polling, NOT a card with buttons)** — the "card" is a **plain-text channel message** with explicit instructions ("Reply `APPROVE`, `EDIT <new body>`, or `REJECT <reason>` to act on this draft"). The poller polls the message's reply thread via `GET /teams/{team}/channels/{channel}/messages/{messageId}/replies` and parses the human's reply text. No bot registration; no Adaptive Card action handling. Looser UX, but the v1 plumbing is *just* the same Graph permissions already listed in § 2.4.
 
-**v1 ships Option B.** Same scheduler, additional polling job for HITL replies.
+**v1 ships Option B as plain-message polling.** Adaptive Cards with action buttons would require a separate bot registration in Azure AD and a public HTTPS callback endpoint — neither of which v1 has, and channel-thread polling does NOT capture card action clicks (they go through the bot invoke pipeline, not the message thread). The naming "card" elsewhere in this spec refers to the structured plain-text message, not an Adaptive Card, until v2.
 
 ### 2.4 Auth model
 
@@ -163,6 +163,7 @@ Client credentials flow with client_id + secret (or cert). Secret stored in the 
 ### 2.5 Out of scope (poller-side)
 
 - Graph subscription/webhook mechanics (we chose polling).
+- Field-level upload mechanics for OneDrive — except this one constraint: **`AttachmentStager` MUST use `createUploadSession` for all attachment uploads, not plain `PUT /drive/items/.../content`**. Plain PUT is capped at 4 MB; financial-statement PDFs routinely exceed that. The deferred poller spec must default to `createUploadSession` even for small files (idempotent path, no branching).
 - Production deployment topology, scaling, retry budgets, idempotency-key design.
 - Token rotation cadence and break-glass auth.
 - Adaptive Card schema for Teams cards.
@@ -389,7 +390,7 @@ One memory store, six top-level keys, strict access discipline.
 ```
 /mnt/memory/
 ├── _registry.json          # contract rows; hot, mutates, inlined into resolver kickoff
-├── mail_cursor.json        # { last_seen_received_at, last_seen_message_id }
+├── mail_cursor.json        # { deltaLink: "https://graph.microsoft.com/v1.0/..." } — opaque server-side cursor
 ├── seen_attachments.json   # append-only: [{sha256, contract_id, message_id, first_seen_at}]
 ├── graph_token.json        # { access_token, expires_at } — refreshed by poller
 ├── priors/
@@ -597,7 +598,9 @@ Resolver `expected.json` per case (sketch):
 ### 8.2 Provisioning order
 
 ```
-files (eval fixtures + tone seed examples)
+[gate 0a] confirm extended-cache TTL beta enabled on the Anthropic account
+[gate 0b] confirm /mnt/memory/ mount-path convention with memory-expert
+  → files (eval fixtures + tone seed examples)
   → vaults (Graph creds)
   → skills (none new — pdf, xlsx, docx are pre-built Anthropic)
   → memory (insignia_pipeline_state)
@@ -605,6 +608,10 @@ files (eval fixtures + tone seed examples)
   → environments (reuse env_01WaJyfTQu9YDfQC5vXiXWj5 if package set unchanged; new image otherwise)
   → sessions (poller's job at runtime, not Phase 3)
 ```
+
+**Gate 0a — extended-cache TTL beta.** § 5.5 and § 8.7 assume the 1-hour `cache_control` TTL beta is active on the account. If only the 5-min default is available, the registry-prefix cache will go cold between most polling cycles and the per-email cost roughly doubles. Confirm via `ant beta:agents` cache-related fields or by checking the account's beta entitlements before Phase 3. If the longer TTL is unavailable: either reduce the polling interval below 5 min (cheap), or drop the registry inlining and switch the resolver to `read`-tool consultation of `_registry.json` from the memory store (more expensive per email but architecturally cleaner under short TTL). Update § 8.7 cost math accordingly.
+
+**Gate 0b — `/mnt/memory/` mount-path convention.** § 4.4 (`memory_paths` blob in `IngestionKickoff`), § 5.1 (memory-store layout), and the resolver/ingestion prompt drafts will all hardcode this prefix. If the actual platform convention is `/mnt/memory/<store_name>/` (or anything else), the agent prompts have wrong paths and `read` calls fail silently. Confirm with `memory-expert` grounding plus a live `ant beta:sessions create --help` check before any prompt drafting. Update §§ 4.4 and 5.1 if the convention differs from the assumed `/mnt/memory/`.
 
 Phase 3 finishes when the agent + memory store + vault exist; Phase 4 (smoke) runs synthetic `ResolverKickoff` and `IngestionKickoff` against the deployed agents to verify the schema contracts.
 
