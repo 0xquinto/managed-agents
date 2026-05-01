@@ -1,0 +1,22 @@
+{
+  "_comment": "Per-case mount layout. The runner reads this to construct the session_resources array. file_id_param values are CLI handles; runner --file <param>=<file_id> swaps in concrete IDs (or uses the captured POC defaults).",
+  "files": [
+    {
+      "file_id_param": "tafi_pdf",
+      "mount_path": "input/tafi_2025/Borrador de EF 2025 - Financiera Tafi - MICI.pdf",
+      "default_file_id": "file_011CaaVTNcQEKbg4Dt1vCcCF",
+      "description": "Tafi 2025 financial statement PDF (captured from POC)"
+    },
+    {
+      "file_id_param": "tafi_csv",
+      "mount_path": "input/tafi_2025/Cartera Total TAFI.csv",
+      "default_file_id": "file_011CaaVTupcqW1ZuPvi63z1M",
+      "description": "Tafi cumulative loan portfolio CSV (captured from POC)"
+    }
+  ],
+  "container_paths_to_capture": [
+    "/mnt/session/out/tafi_2025/manifest.json",
+    "/mnt/session/out/tafi_2025/classification.json"
+  ],
+  "_note_on_mount_paths": "Per sessions-expert.md: mount_path values for type=file resources are auto-prefixed with /mnt/session/uploads/. So the PDF lands at /mnt/session/uploads/input/tafi_2025/... — the kickoff prompts must reference that absolute path."
+}

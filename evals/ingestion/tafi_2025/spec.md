@@ -63,10 +63,15 @@ This is the first ingestion case in the repo. No reuse to disclose. Future cases
 
 ### 6. N + power + uncertainty
 
-**MDE.** For headline claims comparing two `insignia_ingestion` versions:
-- Pre-registered minimum detectable effect: **Δ ≥ 0.20** in pass-rate.
-- At n=75 (3 paraphrases × 25 trials), two-proportion Wilson test has ~90% power for Δ=0.20.
-- Pre-registration is mandatory per playbook § 9 (Lin et al. arXiv:2604.25850).
+**MDE — sized to the decision, not to the playbook headline.** The playbook's n=25/cell number assumes a noisy near-50% baseline. Our baseline is near 100% (v1 already passes the captured trial); variance comes from nondeterminism, not intrinsic difficulty. Sized accordingly:
+
+| Decision | Pre-registered MDE | n required |
+|---|---|---|
+| **A/B regression detection** (does v_new break v_old's baseline?) | Detect any 3-of-N drop with α=0.05 via paired McNemar exact | n=10 paired |
+| **Headline characterization** (precise rate with sub-10pp width) | Δ ≥ 0.10 with 95% CI half-width ≤ 0.05 | n=25/paraphrase × 3 paraphrases |
+| **Construct-validity audit** (does paraphrase choice swing the rate?) | Across-paraphrase variance ≥ 0.10 | n=25 × all paraphrases |
+
+Default to the smallest n that distinguishes the decision being made. Pre-registration is mandatory per playbook § 9 (Lin et al. arXiv:2604.25850); pre-register *before* running, not after.
 
 **Reporting unit.** Every rate reported as `<rate> [<lo>, <hi>] (Wilson 95%, n=N)` per playbook § 8 (Bowyer ICML 2025; ICLR Blogposts 2025). Wald / CLT-based intervals are explicitly forbidden — they under-cover at small n near the boundaries that dominate this slice (p ≈ 1.0).
 
