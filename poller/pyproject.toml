@@ -2,7 +2,7 @@
 name = "insignia-poller"
 version = "0.1.0"
 description = "Insignia ingestion v3 email-driven poller. See docs/superpowers/specs/2026-05-01-ingestion-v3-email-poller-design.md."
-requires-python = ">=3.12,<3.13"
+requires-python = ">=3.13,<3.14"
 dependencies = [
     "pydantic>=2.7,<3",
     "msgraph-sdk>=1.6,<2",
@@ -25,7 +25,7 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 
 [tool.mypy]
-python_version = "3.12"
+python_version = "3.13"
 strict = true
 warn_return_any = true
 warn_unused_ignores = true
