@@ -42,6 +42,13 @@ evals/
 
 Cases are organized by **agent role** (`ingestion`, `coordinator`, `synthesis`, …), not by client — the same `ingestion/tafi_2025` case scores any ingestion agent (v1, v2, future) without modification.
 
+### Roles currently scaffolded
+
+| Role | Cases | Status |
+|---|---|---|
+| `ingestion` | `tafi_2025` | live-runnable; v1 deployed, v2 prompt drafted, A/B pending |
+| `transversal_modeler` | `tafi_2025` | scaffold-only; agent not yet provisioned. Demonstrates scaffold reusability — different I/O shape (Excel output) reuses the same spec/factsheet/expected/resources/kickoff layout. |
+
 ## Running
 
 ### Single-trial replay (cheap, smoke-grade)

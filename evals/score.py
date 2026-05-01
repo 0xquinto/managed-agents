@@ -344,9 +344,60 @@ def score_discipline(expected, run_dir: Path):
     return out
 
 
+def score_xlsx_structure(expected, run_dir: Path):
+    """Stubbed scorer for xlsx_* assertion types.
+
+    Returns SKIP for every assertion until openpyxl-based handlers are
+    implemented. Returning SKIP (rather than PASS) keeps the slice honest:
+    a runner that processes a workbook without the xlsx engine wired must
+    not silently report "passed".
+
+    To wire: replace each SKIP with `import openpyxl; wb = openpyxl.load_workbook(run_dir / "model.xlsx")`
+    and the appropriate call (`wb.sheetnames`, `wb.defined_names`, cell value reads).
+    """
+    spec = expected.get("xlsx_structure")
+    if not spec:
+        return []
+    _ = run_dir  # referenced for future openpyxl wiring; see docstring
+    out = []
+    for a in spec.get("sheets", []):
+        out.append(_result(
+            "SKIP",
+            f"xlsx_sheet_exists[{a.get('name')}]",
+            "xlsx engine not yet wired (NotImplementedError stub)",
+            a.get("column", "outcome"),
+        ))
+    for a in spec.get("named_ranges", []):
+        out.append(_result(
+            "SKIP",
+            f"xlsx_named_range_exists[{a.get('name')}]",
+            "xlsx engine not yet wired (NotImplementedError stub)",
+            a.get("column", "process"),
+        ))
+    for a in spec.get("validation_cells", []):
+        out.append(_result(
+            "SKIP",
+            f"xlsx_validation_cell[{a.get('sheet')}]",
+            "xlsx engine not yet wired (NotImplementedError stub)",
+            a.get("column", "outcome"),
+        ))
+    return out
+
+
+def detect_envelope_filename(run_dir: Path) -> Path:
+    """Different roles emit envelopes under different filenames.
+
+    The runner writes `<role>_final_envelope.json`. Look for any matching file.
+    """
+    candidates = sorted(run_dir.glob("*_final_envelope.json"))
+    if candidates:
+        return candidates[0]
+    return run_dir / "ingestion_final_envelope.json"  # legacy default
+
+
 def score_one_trial(expected, run_dir: Path, manifest_override: Path | None = None):
     """Run all assertions against a single trial directory. Returns the result list."""
-    envelope_path = run_dir / "ingestion_final_envelope.json"
+    envelope_path = detect_envelope_filename(run_dir)
     if not envelope_path.exists():
         return [_result("FAIL", "envelope", f"missing {envelope_path}", "environment")]
     envelope_str = envelope_path.read_text()
@@ -362,6 +413,7 @@ def score_one_trial(expected, run_dir: Path, manifest_override: Path | None = No
     results += score_manifest(expected, manifest)
     results += score_quality_flags(expected, manifest)
     results += score_reconciliations(expected, manifest)
+    results += score_xlsx_structure(expected, run_dir)
     results += score_discipline(expected, run_dir)
     return results
 

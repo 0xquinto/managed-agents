@@ -1,0 +1,7 @@
+{
+  "type": "user",
+  "message": {
+    "role": "user",
+    "content": "Build the transversal model for contract `tafi_2025`. Inputs:\n- normalized_dir: /mnt/session/uploads/out/tafi_2025/normalized/\n- manifest_path: /mnt/session/uploads/out/tafi_2025/manifest.json\n\nProduce /mnt/session/out/tafi_2025/model.xlsx with the four standardized sheets (P&L, Balance Sheet, Cash Flow, Valuation). Preserve named ranges for downstream bespoke_modeler. Return the envelope only."
+  }
+}

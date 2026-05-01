@@ -1,0 +1,7 @@
+{
+  "type": "user",
+  "message": {
+    "role": "user",
+    "content": "contract_id: tafi_2025\nnormalized_dir: /mnt/session/uploads/out/tafi_2025/normalized/\nmanifest_path: /mnt/session/uploads/out/tafi_2025/manifest.json\noutput: /mnt/session/out/tafi_2025/model.xlsx\n\nExecute. Use bash + openpyxl for writes. Validate each sheet. Envelope only."
+  }
+}
