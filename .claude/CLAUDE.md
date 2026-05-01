@@ -4,11 +4,44 @@
 
 A Claude Code agent pipeline that guides a developer through designing, provisioning, and smoke-testing Claude Managed Agents via the Anthropic API. Terminal-driven, no web UI.
 
+## Commands
+
+```bash
+# Lint all actor prompts (CI runs this on every PR touching prompts)
+python lint/prompt_lint.py
+python lint/prompt_lint.py --no-default-excludes  # include frozen v1 + runs/
+
+# Score an eval case from a captured run dir (single trial, smoke-grade)
+python evals/score.py ingestion/tafi_2025 --run runs/latest/smoke/
+
+# Multi-trial aggregate scoring (measurement-grade, Wilson 95% CIs)
+python evals/score.py ingestion/tafi_2025 --trials evals/runs/<ts>-<case>-<agent>/trials/
+
+# Live trial loop (uploads files → creates session → fires kickoff → captures outputs)
+python evals/runner.py ingestion/tafi_2025 --help
+
+# Coverage matrix between behavior-auditor probes and citing lint rules
+python lint/audit_coverage.py
+
+# Convert a behavior-auditor drift report into rule scaffolds under lint/proposed/
+python lint/from_audit.py runs/behavior-drift/<ISO>.md
+```
+
+## Repository layout
+
+- `.claude/agents/` — orchestrator subagent prompts (lead-0, 11 expert specialists, 2 dev-tooling auditors).
+- `agents/<role>/v*_system_prompt.md` — versioned managed-agent system prompts. Committed for diffing + paired A/B tests; the deployed agent's `system` field on the platform is the source of truth.
+- `evals/<role>/<case>/` — eval slices per agent role (`spec.md`, `factsheet.md`, `expected.json`, `resources.json`, `kickoff_v*.json`). Run via `evals/runner.py` + `evals/score.py`.
+- `lint/` — prompt lint (R001–R006), schema (`lint/schema.md`), and the behavior-auditor → lint pipeline (`audit_coverage.py`, `from_audit.py`). Run on every PR via `.github/workflows/lint.yml`.
+- `runs/$RUN_ID/` — orchestrator run artifacts (gitignored). `runs/behavior-drift/<ISO>.md` is the weekly remote-routine output.
+- `docs/` — Anthropic API reference docs that specialists pull from.
+
 ## Architecture
 
-- `lead-0` (Opus) is the ONLY agent that spawns subagents
-- 10 domain specialists (Sonnet) carrying full API reference docs for their domain, plus 1 research specialist (`research-expert`) for external web research via Exa
-- Specialists return 1-2 sentence summaries; verbose output goes to `$RUN_DIR/`
+- `lead-0` (Opus) is the ONLY agent that spawns subagents.
+- 11 specialists (Sonnet): 10 platform-domain experts (agents, environments, events, files, mcp-vaults, memory, multiagent, sessions, skills, tools) carrying full CLI/API reference docs for their domain, plus 1 research specialist (`research-expert`) using Exa.
+- 2 dev-tooling agents (NOT part of the production pipeline): `docs-auditor` (prompts↔upstream-docs drift), `behavior-auditor` (prompts↔platform-reality drift via live API probes). Both run as scheduled remote routines.
+- Specialists return 1-2 sentence summaries; verbose output goes to `$RUN_DIR/`.
 
 ## Credential handling
 
@@ -54,3 +87,7 @@ System prompts live in `.claude/agents/`. Each specialist's prompt contains:
 2. Full CLI `--help` output for its commands
 3. Full API reference docs for its domain
 4. Operational rules
+
+## Drift prevention loop
+
+`behavior-auditor` weekly probes find platform↔prompt drift; `lint/from_audit.py` converts drift findings into proposed lint rules; `lint/audit_coverage.py` verifies every probe has at least one citing rule. See `lint/README.md` for the full diagram.
