@@ -1,0 +1,25 @@
+name: prompt-lint
+
+on:
+  pull_request:
+    paths:
+      - ".claude/agents/**"
+      - "agents/**"
+      - "runs/**/system_prompts/**"
+      - "lint/**"
+  push:
+    branches: [main]
+
+jobs:
+  prompt-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run prompt lint (errors fail the check)
+        run: python lint/prompt_lint.py
+      - name: Full report (warns + info, never fails)
+        if: always()
+        run: python lint/prompt_lint.py --severity info

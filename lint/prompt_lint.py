@@ -32,6 +32,14 @@ DEFAULT_PATHS = [
     REPO_ROOT / "runs",
 ]
 
+# Files intentionally preserved as historical artifacts. They MUST trip rules
+# (that's the documentation: "this is what the broken version looked like"),
+# but CI shouldn't fail on them. Listed by repo-relative path.
+DEFAULT_EXCLUDES = [
+    "agents/insignia_ingestion/v1_system_prompt.md",  # baseline for v1 vs v2 paired McNemar
+    "runs/",  # all captured run snapshots are frozen historical artifacts
+]
+
 PROMPT_GLOBS = [
     "*-expert.md",
     "*_system_prompt.md",
@@ -40,6 +48,14 @@ PROMPT_GLOBS = [
     "behavior-auditor.md",
     "docs-auditor.md",
 ]
+
+
+def relpath(path: Path) -> str:
+    """Path relative to repo root if possible, else absolute string."""
+    try:
+        return str(path.resolve().relative_to(REPO_ROOT))
+    except ValueError:
+        return str(path)
 
 
 @dataclass
@@ -130,7 +146,7 @@ def rule_r001_wrong_mount_path(path: Path, content: str) -> list[Violation]:
             Violation(
                 rule_id="R001",
                 severity="error",
-                file=str(path.relative_to(REPO_ROOT)),
+                file=relpath(path),
                 line=lineno,
                 message=(
                     "Path `/mnt/session/input/` does not exist for type=file resources. "
@@ -167,7 +183,7 @@ def rule_r002_mount_path_prefix_undocumented(path: Path, content: str) -> list[V
         Violation(
             rule_id="R002",
             severity="warn",
-            file=str(path.relative_to(REPO_ROOT)),
+            file=relpath(path),
             line=lineno,
             message=(
                 "Documents `mount_path` without explaining the `/mnt/session/uploads/` "
@@ -209,7 +225,7 @@ def rule_r003_redundant_output_copy(path: Path, content: str) -> list[Violation]
         Violation(
             rule_id="R003",
             severity="warn",
-            file=str(path.relative_to(REPO_ROOT)),
+            file=relpath(path),
             line=lineno,
             message=(
                 "Prompt references both a custom `/mnt/session/out/<id>/` path and "
@@ -259,7 +275,7 @@ def rule_r004_fresh_interpreter_undocumented(path: Path, content: str) -> list[V
         Violation(
             rule_id="R004",
             severity="warn",
-            file=str(path.relative_to(REPO_ROOT)),
+            file=relpath(path),
             line=lineno,
             message=(
                 "Actor prompt uses bash for file extraction without warning that the "
@@ -293,7 +309,7 @@ def rule_r005_envelope_unstructured(path: Path, content: str) -> list[Violation]
         Violation(
             rule_id="R005",
             severity="warn",
-            file=str(path.relative_to(REPO_ROOT)),
+            file=relpath(path),
             line=lineno,
             message=(
                 "Prompt declares a JSON envelope final response but does not forbid "
@@ -301,6 +317,44 @@ def rule_r005_envelope_unstructured(path: Path, content: str) -> list[Violation]
                 "markdown code fences' to prevent ```json wrapping breakage."
             ),
             snippet=line.strip()[:200],
+        )
+    ]
+
+
+REQUIRED_SECTIONS = [
+    ("inputs", re.compile(r"^##\s+Inputs?\s+you\s+receive\b", re.IGNORECASE | re.MULTILINE)),
+    ("job", re.compile(r"^##\s+Your\s+job\b", re.IGNORECASE | re.MULTILINE)),
+    ("output", re.compile(r"^##\s+Output\b", re.IGNORECASE | re.MULTILINE)),
+    ("rules", re.compile(r"^##\s+Rules\b", re.IGNORECASE | re.MULTILINE)),
+]
+
+
+def rule_r006_missing_section(path: Path, content: str) -> list[Violation]:
+    """R006: actor prompt missing one of the required schema sections.
+
+    See `lint/schema.md` for the full template. Required sections are
+    Inputs, Your job, Output, and Rules. Identity discipline + Tools are
+    recommended but not enforced (yet).
+    """
+    if not is_actor_prompt(path, content):
+        return []
+    missing: list[str] = []
+    for label, pattern in REQUIRED_SECTIONS:
+        if not pattern.search(content):
+            missing.append(label)
+    if not missing:
+        return []
+    return [
+        Violation(
+            rule_id="R006",
+            severity="warn",
+            file=relpath(path),
+            line=1,
+            message=(
+                f"Actor prompt missing required section(s): {', '.join(missing)}. "
+                "See lint/schema.md for the actor-prompt template."
+            ),
+            snippet=content.splitlines()[0][:200] if content else "",
         )
     ]
 
@@ -341,10 +395,28 @@ RULES: list[Rule] = [
         description="JSON envelope declared without no-prose/no-fences clause",
         check=rule_r005_envelope_unstructured,
     ),
+    Rule(
+        id="R006",
+        severity="warn",
+        title="missing-required-section",
+        description="Actor prompt missing required schema section (see lint/schema.md)",
+        check=rule_r006_missing_section,
+    ),
 ]
 
 
-def discover_files(paths: Iterable[Path]) -> list[Path]:
+def is_excluded(path: Path, excludes: Iterable[str]) -> bool:
+    rp = relpath(path)
+    for ex in excludes:
+        if ex.endswith("/"):
+            if rp.startswith(ex):
+                return True
+        elif rp == ex:
+            return True
+    return False
+
+
+def discover_files(paths: Iterable[Path], excludes: Iterable[str]) -> list[Path]:
     out: list[Path] = []
     for root in paths:
         if not root.exists():
@@ -363,7 +435,7 @@ def discover_files(paths: Iterable[Path]) -> list[Path]:
     uniq = []
     for p in out:
         rp = p.resolve()
-        if rp not in seen:
+        if rp not in seen and not is_excluded(p, excludes):
             seen.add(rp)
             uniq.append(p)
     return sorted(uniq)
@@ -430,10 +502,29 @@ def main() -> int:
         default=None,
         help="Filter violations to this severity or higher",
     )
+    parser.add_argument(
+        "--exclude",
+        action="append",
+        default=None,
+        help="Repo-relative path to exclude (suffix '/' for directory). Repeatable. "
+        "Default excludes are skipped if any --exclude is passed; use --no-default-excludes "
+        "with empty --exclude to scan everything.",
+    )
+    parser.add_argument(
+        "--no-default-excludes",
+        action="store_true",
+        help="Drop the built-in DEFAULT_EXCLUDES (frozen v1 prompt + runs/).",
+    )
     args = parser.parse_args()
 
     paths = [Path(p) for p in args.paths] if args.paths else DEFAULT_PATHS
-    files = discover_files(paths)
+    if args.no_default_excludes:
+        excludes = list(args.exclude or [])
+    elif args.exclude is not None:
+        excludes = list(DEFAULT_EXCLUDES) + list(args.exclude)
+    else:
+        excludes = list(DEFAULT_EXCLUDES)
+    files = discover_files(paths, excludes)
     violations: list[Violation] = []
     for f in files:
         violations.extend(lint_file(f))
@@ -446,7 +537,7 @@ def main() -> int:
     if args.format == "json":
         print(json.dumps(
             {
-                "scanned": [str(f.relative_to(REPO_ROOT)) for f in files],
+                "scanned": [relpath(f) for f in files],
                 "violations": [v.to_dict() for v in violations],
             },
             indent=2,

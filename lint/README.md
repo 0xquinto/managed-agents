@@ -12,15 +12,36 @@ failure mode from a real session trace, not a style preference.
 | `R003` | warn | POC trace 2026-04-30 (`sesn_011CaacsF6hNQ5GJPNQMie2E`): redundant `cp -r` from custom out dir to `/mnt/session/outputs/` cost ~3s/run. |
 | `R004` | warn | Same trace: bash spawns a fresh interpreter per call; without `/tmp/<id>/` persistence guidance the agent re-extracted PDF pages 27–39 (~90s wasted). |
 | `R005` | warn | General: actor prompts that promise a JSON envelope but don't forbid surrounding prose / markdown fences routinely produce ```` ```json ```` wrapped output that breaks strict downstream parsers. |
+| `R006` | warn | Structural: actor prompt missing one of the required schema sections. See [`lint/schema.md`](schema.md). |
 
 ## Usage
 
 ```bash
-python lint/prompt_lint.py                 # markdown report, exits 1 on any error
-python lint/prompt_lint.py --format json   # machine-readable
-python lint/prompt_lint.py --severity warn # show warns and errors only
-python lint/prompt_lint.py --paths agents/insignia_ingestion  # scope to a path
+python lint/prompt_lint.py                       # markdown report, exits 1 on any error
+python lint/prompt_lint.py --format json         # machine-readable
+python lint/prompt_lint.py --severity warn       # show warns and errors only
+python lint/prompt_lint.py --paths agents/foo    # scope to a path
+python lint/prompt_lint.py --no-default-excludes # include frozen historical files
 ```
+
+## Default excludes
+
+Two paths are excluded from CI scans because they're intentionally preserved:
+
+- `agents/insignia_ingestion/v1_system_prompt.md` — the v1 baseline. Kept frozen
+  for the v1 vs v2 paired McNemar A/B in `evals/ingestion/tafi_2025/`. Editing
+  it would invalidate the comparison.
+- `runs/` — captured historical run snapshots. Frozen by definition.
+
+Override either with `--exclude <path>` (additive to defaults) or
+`--no-default-excludes` (drop them entirely — used by `lint/baseline.md`).
+
+## Adding to the exclude list
+
+Edit `DEFAULT_EXCLUDES` in `lint/prompt_lint.py`. Each entry is a repo-relative
+path; suffix `/` for directory match. A new exclude needs a one-line comment
+explaining *why* the file is being preserved as-is — without that, the next
+contributor will assume it should be cleaned up.
 
 ## What it scans
 
