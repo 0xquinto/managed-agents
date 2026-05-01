@@ -70,6 +70,41 @@ lint/prompt_lint.py > lint/baseline.md`).
 
 `behavior-auditor` (in `.claude/agents/`) detects platform↔documentation drift
 at runtime by sending real probes. This lint detects prompt↔prompt drift at
-edit time. Run them together: behavior-auditor finds new failure modes; the
-lint encodes them as rules so the same mistake doesn't reappear in another
-prompt.
+edit time. Together they form a closed loop:
+
+```
+behavior-auditor probes the live API   → finds drift
+            │
+            ▼
+runs/behavior-drift/<ISO>.md (weekly)  → human reviews
+            │
+            ▼
+python lint/audit_coverage.py          → which probes have no lint coverage?
+            │
+            ▼
+python lint/from_audit.py <report>     → scaffold a rule for each new drift
+            │
+            ▼
+lint/proposed/R0NN_<probe>__<slug>.py  → human edits regex / heuristic
+            │
+            ▼
+move into lint/prompt_lint.py + RULES  → CI now blocks the mistake forever
+```
+
+Every R0NN rule should cite its source probe ID in its docstring. `audit_coverage.py`
+verifies the citation; without it, the loop is open and a future drift
+re-discovery is silent.
+
+### Pipeline tools
+
+- `lint/audit_coverage.py` — coverage matrix: probes ↔ citing rules. Pass `--strict`
+  to exit non-zero if any probe is uncovered.
+- `lint/from_audit.py` — parse a `runs/behavior-drift/<ISO>.md` report, identify
+  drifts not yet covered, write rule scaffolds to `lint/proposed/`. Use `--dry-run`
+  to print without writing.
+
+The pipeline is intentionally not fully automatic: the regex / heuristic in each
+new rule is a human judgment call (what's a documentation context vs an
+instruction? what's the false-positive surface?). Auto-generated rules would be
+noisy. The scaffold removes the boilerplate so the reviewer focuses on the
+heuristic.

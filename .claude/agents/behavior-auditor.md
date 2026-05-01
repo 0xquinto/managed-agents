@@ -182,4 +182,26 @@ modify any other files. If pre-flight fails, write a one-line file
 explaining why and commit that instead.
 ```
 
+## Pipeline to lint
+
+When a probe in this catalog returns `Verdict: DRIFT`, the same mistake can
+re-appear in any prompt across the repo. To prevent that, the drift should
+become a lint rule:
+
+1. Reviewer reads the report under `runs/behavior-drift/<ISO>.md`.
+2. Run `python lint/audit_coverage.py` to confirm which probes have no
+   covering lint rule (a rule that cites the probe ID in its docstring).
+3. For each uncovered DRIFT, run `python lint/from_audit.py
+   runs/behavior-drift/<ISO>.md` — it emits a Python rule scaffold under
+   `lint/proposed/<rule_id>_<probe_id>__<slug>.py` for each new drift.
+4. Reviewer edits the scaffold (the regex / heuristic is the human's call,
+   not auto-generated), then moves the rule into `lint/prompt_lint.py` and
+   adds a `Rule(...)` entry to `RULES`.
+5. CI (the `prompt-lint` workflow) now blocks the same mistake from
+   appearing in any new prompt.
+
+This keeps the catalog stable (probes are runtime drift checks; lint rules
+are prompt-edit-time prevention) while ensuring observed drifts never need
+to be re-discovered by a future trace.
+
 The routine is a separate concern from this agent — this file describes only the probes themselves. The main-conversation operator owns enabling/disabling the schedule via `/schedule`.
