@@ -91,3 +91,11 @@ System prompts live in `.claude/agents/`. Each specialist's prompt contains:
 ## Drift prevention loop
 
 `behavior-auditor` weekly probes find platform↔prompt drift; `lint/from_audit.py` converts drift findings into proposed lint rules; `lint/audit_coverage.py` verifies every probe has at least one citing rule. See `lint/README.md` for the full diagram.
+
+## Conventions (recurring gotchas)
+
+- `agents/insignia_ingestion/v1_system_prompt.md` and `runs/` are frozen baselines — lint errors there are intentional; do NOT "fix" them (would invalidate the v1↔v2 paired-McNemar A/B). See `lint/DEFAULT_EXCLUDES` in `lint/prompt_lint.py`.
+- Branch + PR + squash-merge for every change. Do NOT push directly to `main`.
+- Production-resource mutations (`ant beta:agents create|update`, `ant beta:environments create|delete`, `ant beta:vaults *`, etc.) need explicit action-naming authorization — generic "proceed" or "yes" is treated as too broad by the harness.
+- `agents/<role>/CHANGELOG.md` is the local diffable artifact for prompt versions; the deployed `system` field on the platform is the source of truth — read both when investigating prompt behavior.
+- Always `git add <specific paths>`. Never `git add .` or `-A` — adjacent untracked files include `.DS_Store`, `docs/api-reference/`, and pitch decks.
