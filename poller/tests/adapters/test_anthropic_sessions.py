@@ -384,12 +384,19 @@ async def test_sdk_backend_captures_write_tool_input_for_requested_paths() -> No
     assert other not in result.captured_files
 
 
-async def test_sdk_backend_captures_edit_tool_writes_too() -> None:
+async def test_sdk_backend_does_not_capture_edit_tool_events() -> None:
+    """Edit events emit `{file_path, old_str, new_str}` not `content` — capturing
+    them would clobber the previous Write with an empty `content` default. v3
+    ingestion's prompt mandates `write` for files in `capture_files`, so Edit is
+    deliberately not in the capture set."""
     target = "/mnt/session/out/INS-2026-007/manifest.json"
     fake = _FakeSDKClient(
         script=[
             [
-                _tool_use_event(name="edit", file_path=target, content="patched"),
+                _tool_use_event(name="write", file_path=target, content='{"v": 1}'),
+                _tool_use_event(
+                    name="edit", file_path=target, old_str='"v": 1', new_str='"v": 2'
+                ),
                 _idle_event("end_turn"),
             ]
         ]
@@ -403,7 +410,92 @@ async def test_sdk_backend_captures_edit_tool_writes_too() -> None:
         capture_files=[target],
     )
 
-    assert result.captured_files == {target: b"patched"}
+    # The Write captured; the Edit was ignored — manifest is the original write.
+    assert result.captured_files == {target: b'{"v": 1}'}
+
+
+async def test_sdk_backend_captures_bytes_content_without_re_encoding() -> None:
+    """Round-trip a binary content payload to guard against silent str() coercion."""
+    target = "/mnt/session/out/INS-2026-007/normalized/data.bin"
+    blob = b"\x00\x01\xfe\xff PNG-or-similar-binary"
+    fake = _FakeSDKClient(
+        script=[
+            [
+                _tool_use_event(name="write", file_path=target, content=blob),
+                _idle_event("end_turn"),
+            ]
+        ]
+    )
+    backend = _backend(fake, default_environment_id="env_1")
+
+    result = await backend.run_session(
+        agent_id="agent_x",
+        environment_id="env_1",
+        kickoff_text="kickoff",
+        capture_files=[target],
+    )
+
+    assert result.captured_files[target] == blob, "bytes must round-trip verbatim"
+
+
+async def test_sdk_backend_ignores_writes_to_paths_not_in_capture_set() -> None:
+    """If capture_files is None or empty, no tool_use writes get captured —
+    guards against `set(None)` regressions in the capture-paths branch."""
+    fake = _FakeSDKClient(
+        script=[
+            [
+                _tool_use_event(name="write", file_path="/x", content="y"),
+                _idle_event("end_turn"),
+            ]
+        ]
+    )
+    backend = _backend(fake, default_environment_id="env_1")
+
+    result = await backend.run_session(
+        agent_id="agent_x",
+        environment_id="env_1",
+        kickoff_text="kickoff",
+        # capture_files omitted entirely (defaults to None)
+    )
+
+    assert result.captured_files == {}
+
+
+async def test_sdk_backend_marks_requires_action_idle_as_error() -> None:
+    """`session.status_idle` with `stop_reason: requires_action` means the agent
+    paused for HITL — NOT a clean completion. Backend must surface is_error=True
+    while preserving the stop_reason so the caller can distinguish it from
+    end_turn or retries_exhausted."""
+    fake = _FakeSDKClient(
+        script=[
+            [
+                _msg_event("waiting on confirmation"),
+                _idle_event("requires_action"),
+            ]
+        ]
+    )
+    backend = _backend(fake, default_environment_id="env_1")
+
+    result = await backend.run_session(
+        agent_id="agent_x", environment_id="env_1", kickoff_text="hi"
+    )
+
+    assert result.stop_reason == "requires_action"
+    assert result.is_error is True
+
+
+async def test_sdk_backend_marks_retries_exhausted_idle_as_error() -> None:
+    fake = _FakeSDKClient(
+        script=[[_idle_event("retries_exhausted")]]
+    )
+    backend = _backend(fake, default_environment_id="env_1")
+
+    result = await backend.run_session(
+        agent_id="agent_x", environment_id="env_1", kickoff_text="hi"
+    )
+
+    assert result.stop_reason == "retries_exhausted"
+    assert result.is_error is True
 
 
 async def test_sdk_backend_treats_terminated_without_idle_as_error() -> None:
@@ -481,7 +573,12 @@ async def test_sdk_backend_falls_back_when_extended_cache_ttl_beta_rejected() ->
     assert EXTENDED_CACHE_TTL_BETA_HEADER not in fake.stream_calls[0]["betas"]
 
 
-async def test_sdk_backend_entitlement_fallback_is_sticky_across_calls() -> None:
+async def test_sdk_backend_entitlement_fallback_is_sticky_across_calls(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Sticky-fallback contract: the header is dropped on every subsequent call
+    AND the warning logs exactly once across N calls (otherwise we drown an
+    operator's alert pipeline with the same line per cycle)."""
     fake = _FakeSDKClient(
         script=[
             [_idle_event("end_turn")],
@@ -491,24 +588,31 @@ async def test_sdk_backend_entitlement_fallback_is_sticky_across_calls() -> None
     )
     backend = _backend(fake, default_environment_id="env_1")
 
-    await backend.run_session(
-        agent_id="a",
-        environment_id="env_1",
-        kickoff_text="hi",
-        beta_headers=[EXTENDED_CACHE_TTL_BETA_HEADER],
-    )
-    await backend.run_session(
-        agent_id="a",
-        environment_id="env_1",
-        kickoff_text="hi",
-        beta_headers=[EXTENDED_CACHE_TTL_BETA_HEADER],
-    )
+    with caplog.at_level("WARNING", logger="poller.adapters.anthropic_sessions"):
+        await backend.run_session(
+            agent_id="a",
+            environment_id="env_1",
+            kickoff_text="hi",
+            beta_headers=[EXTENDED_CACHE_TTL_BETA_HEADER],
+        )
+        await backend.run_session(
+            agent_id="a",
+            environment_id="env_1",
+            kickoff_text="hi",
+            beta_headers=[EXTENDED_CACHE_TTL_BETA_HEADER],
+        )
 
     # Three create calls: 1st failed (with header), 2nd retry (without), 3rd
     # second-run-session (without). The header is dropped before the SDK is
     # touched on the second run.
     assert len(fake.create_calls) == 3
     assert EXTENDED_CACHE_TTL_BETA_HEADER not in fake.create_calls[2]["betas"]
+    # Exactly one warning across both run_session calls.
+    fallback_warnings = [
+        rec for rec in caplog.records
+        if rec.levelname == "WARNING" and "Gate 0a entitlement not" in rec.message
+    ]
+    assert len(fallback_warnings) == 1, "warning should fire once, not per cycle"
 
 
 async def test_sdk_backend_does_not_fall_back_for_unrelated_400s() -> None:
@@ -557,3 +661,55 @@ async def test_sdk_backend_falls_through_default_environment_id() -> None:
 def test_sdk_backend_requires_client_or_api_key() -> None:
     with pytest.raises(ValueError, match="client.*api_key"):
         AnthropicSDKSessionsBackend()
+
+
+@dataclass
+class _SlowFakeStream:
+    """Stream that blocks the worker thread until cancelled — simulates a wedged
+    session that emits no idle/terminated event before the timeout fires."""
+
+    def __iter__(self) -> Iterator[Any]:
+        # Sleep effectively-forever; asyncio.wait_for cancels the wrapping task,
+        # the to_thread future is abandoned, and we return.
+        import time
+
+        time.sleep(60)  # well beyond the test's max_session_seconds
+        return iter([])
+
+    def __enter__(self) -> _SlowFakeStream:
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        del exc_info
+
+
+@dataclass
+class _WedgedSDKClient(_FakeSDKClient):
+    """Fake whose stream blocks instead of yielding events."""
+
+    @contextmanager
+    def stream(self, session_id: str, *, betas: list[str]) -> Iterator[_FakeStream]:
+        self.stream_calls.append({"session_id": session_id, "betas": list(betas)})
+        # Yield the slow stream as if it were a normal _FakeStream (duck-typed).
+        yield _SlowFakeStream()  # type: ignore[misc]
+
+
+async def test_sdk_backend_times_out_on_wedged_stream() -> None:
+    """A stream that never sends idle / terminated must surface a TimeoutError as
+    `is_error=True, stop_reason="timeout"` rather than block the cron forever."""
+    fake = _WedgedSDKClient()
+    backend = AnthropicSDKSessionsBackend(
+        client=cast(anthropic.Anthropic, fake),
+        default_environment_id="env_1",
+        max_session_seconds=0.1,
+    )
+
+    result = await backend.run_session(
+        agent_id="agent_x",
+        environment_id="env_1",
+        kickoff_text="hi",
+    )
+
+    assert result.is_error is True
+    assert result.stop_reason == "timeout"
+    assert result.captured_files == {}

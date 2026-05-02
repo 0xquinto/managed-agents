@@ -182,3 +182,54 @@ async def test_resolver_step_raises_on_invalid_envelope_shape() -> None:
 
     with pytest.raises(AnthropicError, match="failed validation"):
         await step.run(_kickoff())
+
+
+class _ErroredSessionBackend:
+    """Backend that returns is_error=True (e.g. session.error mid-stream or
+    requires_action / retries_exhausted / timeout). The step must raise."""
+
+    def __init__(self, *, stop_reason: str = "requires_action") -> None:
+        self.stop_reason = stop_reason
+
+    async def run_session(
+        self,
+        *,
+        agent_id: str,
+        environment_id: str | None,
+        kickoff_text: str,
+        cache_control_blocks: list[dict[str, Any]] | None = None,
+        capture_files: list[str] | None = None,
+        beta_headers: list[str] | None = None,
+    ) -> SessionResult:
+        del agent_id, environment_id, kickoff_text
+        del cache_control_blocks, capture_files, beta_headers
+        return SessionResult(
+            session_id="sess_errored",
+            stop_reason=self.stop_reason,
+            final_message_text="",
+            captured_files={},
+            is_error=True,
+        )
+
+
+async def test_resolver_step_raises_when_session_reports_is_error() -> None:
+    """is_error=True must surface as an AnthropicError instead of being silently
+    forwarded into ResolverOutcome — otherwise the orchestrator posts a
+    status_ok card on a session that never completed cleanly."""
+    adapter = AnthropicSessionsAdapter(backend=_ErroredSessionBackend())
+    step = ResolverStep(sessions=adapter, agent_id="agent_resolver")
+
+    with pytest.raises(AnthropicError, match="reported errors mid-stream"):
+        await step.run(_kickoff())
+
+
+async def test_resolver_step_error_message_includes_stop_reason() -> None:
+    """The stop_reason is non-redundant info — `requires_action` vs `timeout`
+    vs `retries_exhausted` are all is_error=True but mean different things."""
+    adapter = AnthropicSessionsAdapter(
+        backend=_ErroredSessionBackend(stop_reason="timeout")
+    )
+    step = ResolverStep(sessions=adapter, agent_id="agent_resolver")
+
+    with pytest.raises(AnthropicError, match="timeout"):
+        await step.run(_kickoff())
