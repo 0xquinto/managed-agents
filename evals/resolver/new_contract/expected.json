@@ -43,6 +43,6 @@
     }
   ],
   "envelope_format": [
-    { "type": "no_markdown_fences", "column": "process" }
+    { "type": "no_markdown_fences", "column": "environment", "rationale": "Haiku-default behavior; cosmetic only. score.py extractor + SDK backend both handle fences. See agents/insignia_resolver/MODEL_TIER_FINDINGS_2026-05-02.md." }
   ]
 }
