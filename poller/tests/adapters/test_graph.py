@@ -1,7 +1,6 @@
 """GraphAdapter tests — protocol shape + delta query against a fake SDK client."""
 
 from datetime import UTC, datetime
-from typing import Protocol
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -11,7 +10,9 @@ from poller.exceptions import GraphError
 
 
 def test_graph_adapter_protocol_is_a_protocol() -> None:
-    assert issubclass(GraphAdapterProtocol, Protocol)
+    # Protocol classes can't be passed to issubclass cleanly under strict mypy;
+    # the hasattr probe in the next test asserts the same shape requirement.
+    assert getattr(GraphAdapterProtocol, '_is_protocol', False)
 
 
 def test_graph_adapter_protocol_declares_list_new_messages_via_delta() -> None:

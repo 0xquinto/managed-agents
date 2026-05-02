@@ -85,7 +85,7 @@ async def test_cursor_advances_after_successful_fetch(memory: MemoryStoreClient)
 
 
 async def test_rejects_non_string_cursor(memory: MemoryStoreClient) -> None:
-    memory.write_mail_cursor({"deltaLink": 12345})  # type: ignore[dict-item]
+    memory.write_mail_cursor({"deltaLink": 12345})
 
     fake_graph = AsyncMock()
     feed = MailFeed(graph=fake_graph, memory=memory)

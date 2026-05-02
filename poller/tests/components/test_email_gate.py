@@ -32,27 +32,30 @@ def memory(tmp_path: Path) -> MemoryStoreClient:
     return MemoryStoreClient(backend=LocalFilesystemBackend(root=tmp_path))
 
 
+class Clock:
+    """Deterministic clock for rate-limit tests; mutate `.now` to advance."""
+
+    def __init__(self, start: float = 1_700_000_000.0) -> None:
+        self.now = start
+
+    def __call__(self) -> float:
+        return self.now
+
+
 @pytest.fixture
-def fixed_clock() -> callable:  # type: ignore[type-arg]
-    """Deterministic clock starting at a known epoch."""
-
-    class Clock:
-        now = 1_700_000_000.0
-
-        def __call__(self) -> float:
-            return self.now
-
+def fixed_clock() -> Clock:
+    """Fresh deterministic clock per test."""
     return Clock()
 
 
-def _gate(memory: MemoryStoreClient, fixed_clock: callable) -> EmailGate:  # type: ignore[type-arg]
+def _gate(memory: MemoryStoreClient, fixed_clock: Clock) -> EmailGate:
     return EmailGate(memory=memory, clock=fixed_clock)
 
 
 # Stage 1 -------------------------------------------------------------------
 
 
-def test_stage1_rejects_no_attachments(memory: MemoryStoreClient, fixed_clock) -> None:  # type: ignore[no-untyped-def]
+def test_stage1_rejects_no_attachments(memory: MemoryStoreClient, fixed_clock: Clock) -> None:
     gate = _gate(memory, fixed_clock)
     decision = gate.evaluate(email=_email(), raw_attachments=[])
 
@@ -63,7 +66,7 @@ def test_stage1_rejects_no_attachments(memory: MemoryStoreClient, fixed_clock) -
 # Stage 2 -------------------------------------------------------------------
 
 
-def test_stage2_rejects_inline_only(memory: MemoryStoreClient, fixed_clock) -> None:  # type: ignore[no-untyped-def]
+def test_stage2_rejects_inline_only(memory: MemoryStoreClient, fixed_clock: Clock) -> None:
     gate = _gate(memory, fixed_clock)
     inline_signature = {
         "isInline": True,
@@ -79,7 +82,7 @@ def test_stage2_rejects_inline_only(memory: MemoryStoreClient, fixed_clock) -> N
     assert "cosmetic-only" in decision.reason
 
 
-def test_stage2_rejects_small_cosmetic_image(memory: MemoryStoreClient, fixed_clock) -> None:  # type: ignore[no-untyped-def]
+def test_stage2_rejects_small_cosmetic_image(memory: MemoryStoreClient, fixed_clock: Clock) -> None:
     gate = _gate(memory, fixed_clock)
     tiny_jpeg = {
         "isInline": False,
@@ -95,7 +98,7 @@ def test_stage2_rejects_small_cosmetic_image(memory: MemoryStoreClient, fixed_cl
     assert "cosmetic-only" in decision.reason
 
 
-def test_stage2_keeps_large_image(memory: MemoryStoreClient, fixed_clock) -> None:  # type: ignore[no-untyped-def]
+def test_stage2_keeps_large_image(memory: MemoryStoreClient, fixed_clock: Clock) -> None:
     """An image larger than 5 KB is NOT cosmetic — could be a scanned doc."""
     gate = _gate(memory, fixed_clock)
     big_jpeg = {
@@ -116,7 +119,7 @@ def test_stage2_keeps_large_image(memory: MemoryStoreClient, fixed_clock) -> Non
 
 def test_stage3_rejects_full_duplicate_bundle(
     memory: MemoryStoreClient,
-    fixed_clock,  # type: ignore[no-untyped-def]
+    fixed_clock: Clock,
 ) -> None:
     """When all post-cosmetic attachments are already seen for the same contract, reject."""
     gate = _gate(memory, fixed_clock)
@@ -165,7 +168,7 @@ def test_stage3_rejects_full_duplicate_bundle(
 
 def test_stage3_passes_when_one_attachment_is_new(
     memory: MemoryStoreClient,
-    fixed_clock,  # type: ignore[no-untyped-def]
+    fixed_clock: Clock,
 ) -> None:
     """If even one post-cosmetic attachment is new, spawn."""
     gate = _gate(memory, fixed_clock)
@@ -212,8 +215,8 @@ def test_stage3_passes_when_one_attachment_is_new(
 
 
 def test_stage4_thread_cooldown_defers_back_to_back_emails(
-    memory: MemoryStoreClient, fixed_clock
-) -> None:  # type: ignore[no-untyped-def]
+    memory: MemoryStoreClient, fixed_clock: Clock
+) -> None:
     """Two spawns on the same conversationId within 60 seconds → second is deferred."""
     gate = _gate(memory, fixed_clock)
     attachment = {
@@ -237,8 +240,8 @@ def test_stage4_thread_cooldown_defers_back_to_back_emails(
 
 
 def test_stage4_thread_cooldown_clears_after_window(
-    memory: MemoryStoreClient, fixed_clock
-) -> None:  # type: ignore[no-untyped-def]
+    memory: MemoryStoreClient, fixed_clock: Clock
+) -> None:
     gate = _gate(memory, fixed_clock)
     attachment = {
         "isInline": False,
@@ -259,7 +262,7 @@ def test_stage4_thread_cooldown_clears_after_window(
     assert second.outcome == "spawn"
 
 
-def test_stage4_sender_hourly_cap(memory: MemoryStoreClient, fixed_clock) -> None:  # type: ignore[no-untyped-def]
+def test_stage4_sender_hourly_cap(memory: MemoryStoreClient, fixed_clock: Clock) -> None:
     """7th spawn from the same sender within an hour is rejected."""
     gate = _gate(memory, fixed_clock)
 
@@ -299,7 +302,7 @@ def test_stage4_sender_hourly_cap(memory: MemoryStoreClient, fixed_clock) -> Non
 
 def test_stage5_builds_kickoff_with_registry_and_candidate_slice(
     memory: MemoryStoreClient,
-    fixed_clock,  # type: ignore[no-untyped-def]
+    fixed_clock: Clock,
 ) -> None:
     gate = _gate(memory, fixed_clock)
 
@@ -359,7 +362,7 @@ def test_stage5_builds_kickoff_with_registry_and_candidate_slice(
     assert kickoff.attachments[0].filename == "Tafi-update.pdf"
 
 
-def test_stage5_records_spawn_in_ledger(memory: MemoryStoreClient, fixed_clock) -> None:  # type: ignore[no-untyped-def]
+def test_stage5_records_spawn_in_ledger(memory: MemoryStoreClient, fixed_clock: Clock) -> None:
     gate = _gate(memory, fixed_clock)
     attachment = {
         "isInline": False,
