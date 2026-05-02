@@ -526,13 +526,38 @@ def detect_envelope_filename(run_dir: Path) -> Path:
     return run_dir / "ingestion_final_envelope.json"  # legacy default
 
 
+def _strip_markdown_fences(s: str) -> str:
+    """Strip a single ```...``` wrapper if present, leaving the rest verbatim.
+
+    Format violations (the wrapper itself) are reported separately by
+    `score_envelope_format` against the original `envelope_str`. Stripping here
+    just lets content assertions still run when the model wraps the JSON —
+    otherwise a single `no_markdown_fences` failure cascades into all envelope
+    assertions FAILing for the wrong reason.
+    """
+    t = s.strip()
+    if not t.startswith("```"):
+        return s
+    # Drop opening ``` line (e.g. "```json") and closing ```
+    lines = t.splitlines()
+    if len(lines) >= 2 and lines[0].startswith("```") and lines[-1].strip() == "```":
+        return "\n".join(lines[1:-1])
+    return s
+
+
 def score_one_trial(expected, run_dir: Path, manifest_override: Path | None = None):
     """Run all assertions against a single trial directory. Returns the result list."""
     envelope_path = detect_envelope_filename(run_dir)
     if not envelope_path.exists():
         return [_result("FAIL", "envelope", f"missing {envelope_path}", "environment")]
     envelope_str = envelope_path.read_text()
-    envelope = json.loads(envelope_str)
+    try:
+        envelope = json.loads(_strip_markdown_fences(envelope_str))
+    except json.JSONDecodeError as e:
+        return [
+            _result("FAIL", "envelope.parse", f"json decode failed: {e}", "process"),
+            *score_envelope_format(expected, envelope_str),
+        ]
 
     mp = manifest_override or (run_dir / "manifest.json")
     manifest = load_json(mp) if mp.exists() else None

@@ -58,9 +58,20 @@ def sha256_canonical(obj) -> str:
     return sha256_bytes(json.dumps(obj, sort_keys=True, separators=(",", ":")).encode())
 
 
+BETA_HEADER = "managed-agents-2026-04-01"
+
+
 def run_ant(args: list[str], capture: bool = True, check: bool = True) -> dict | str:
-    """Invoke the ant CLI. Returns parsed JSON when stdout looks like JSON, else raw text."""
+    """Invoke the ant CLI. Returns parsed JSON when stdout looks like JSON, else raw text.
+
+    Auto-injects `--beta managed-agents-2026-04-01` for any `beta:*` subcommand
+    that doesn't already specify one (per CLAUDE.md invariant: all API requests
+    require the beta header).
+    """
     cmd = ["ant", "--format", "json"] + args
+    needs_beta = any(a.startswith("beta:") for a in args) and "--beta" not in args
+    if needs_beta:
+        cmd += ["--beta", BETA_HEADER]
     res = subprocess.run(cmd, capture_output=capture, text=True)
     if check and res.returncode != 0:
         raise RuntimeError(f"ant failed (exit {res.returncode}): {' '.join(cmd)}\nstderr: {res.stderr}\nstdout: {res.stdout[:500]}")
@@ -199,11 +210,33 @@ def create_session(agent_id: str, env_id: str, resources: list[dict], title: str
     return res["id"]
 
 
+def _to_api_event_shape(event: dict) -> dict:
+    """Translate SDK-shape user events to the API/CLI shape.
+
+    Eval kickoffs are stored in the SDK form `{type: "user", message: {role: "user",
+    content: "..."}}` because the production poller's `AnthropicSDKSessionsBackend`
+    builds a wrapper around exactly that. The CLI/REST API instead expects
+    `{type: "user.message", content: [{type: "text", text: "..."}]}` — the SDK does
+    this translation internally; the eval runner has to do it explicitly because
+    it shells out to `ant`. Identity for already-API-shaped events.
+    """
+    if event.get("type") == "user" and isinstance(event.get("message"), dict):
+        content = event["message"].get("content")
+        if isinstance(content, str):
+            return {
+                "type": "user.message",
+                "content": [{"type": "text", "text": content}],
+            }
+        if isinstance(content, list):
+            return {"type": "user.message", "content": content}
+    return event
+
+
 def send_event(session_id: str, event: dict) -> None:
     args = [
         "beta:sessions:events", "send",
         "--session-id", session_id,
-        "--event", json.dumps(event),
+        "--event", json.dumps(_to_api_event_shape(event)),
     ]
     run_ant(args)
 
@@ -232,16 +265,33 @@ def session_status(session_id: str) -> str:
     return "unknown"
 
 
-def poll_until_idle(session_id: str, timeout_seconds: int, sleep_seconds: int = 10) -> tuple[bool, str]:
-    """Polls session status. Returns (reached_idle, last_status)."""
+def poll_until_idle(session_id: str, timeout_seconds: int, sleep_seconds: int = 5) -> tuple[bool, str]:
+    """Polls until a `session.status_idle` event appears in the event stream.
+
+    We watch for the *event* (which is only emitted after the agent finishes
+    a turn), not the `status` field on the session record — that field
+    briefly reads `idle` between session creation and kickoff dispatch, so
+    polling it races the user.message ingest and exits prematurely.
+
+    Returns `(reached_idle, last_status)` where last_status is `"idle"` (with
+    optional stop_reason annotation), `"timeout"`, or `"terminated"`.
+    """
     deadline = time.time() + timeout_seconds
-    last = "unknown"
     while time.time() < deadline:
-        last = session_status(session_id)
-        if last in ("idle", "completed", "failed"):
-            return True, last
+        events = list_events(session_id)
+        # Walk forward — `session.status_idle` events accumulate across turns
+        # but for a single-shot kickoff there's at most one.
+        for e in events:
+            if not isinstance(e, dict):
+                continue
+            t = e.get("type")
+            if t == "session.status_idle":
+                stop = e.get("stop_reason")
+                return True, f"idle:{stop}" if stop else "idle"
+            if t == "session.status_terminated":
+                return True, "terminated"
         time.sleep(sleep_seconds)
-    return False, last
+    return False, "timeout"
 
 
 def extract_envelope(events: list[dict]) -> str | None:
