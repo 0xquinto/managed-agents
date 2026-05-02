@@ -3,8 +3,8 @@
 Phase 1 implements list_new_messages_via_delta. Phase 3 adds download_attachment +
 upload_to_onedrive_via_session (the createUploadSession path mandated by spec § 2.5).
 
-Phase 4 will add post_channel_message + send_mail + reply-thread polling alongside
-live tenant integration tests.
+Phase 4 adds post_channel_message + list_channel_replies + send_mail (per spec
+§ 2.3 Option B HITL routing).
 
 The upload helper is intentionally written to use createUploadSession even for small
 files. Spec § 2.5 forbids the plain `PUT /drive/items/.../content` path because it
@@ -14,12 +14,25 @@ code path beats a size-branching code path.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Protocol, runtime_checkable
 
 import httpx
 
 from poller.exceptions import GraphError
 from poller.schemas import EmailMeta
+
+
+@dataclass(frozen=True)
+class ChannelReply:
+    """One reply message in a Teams channel thread."""
+
+    reply_id: str
+    body_text: str
+    author_id: str
+    author_name: str
+    created_at: datetime
 
 
 @runtime_checkable
@@ -70,6 +83,42 @@ class GraphAdapterProtocol(Protocol):
         Defaulting to createUploadSession even for small files keeps the code path
         idempotent — no size branching.
         """
+        ...
+
+    async def post_channel_message(
+        self,
+        *,
+        team_id: str,
+        channel_id: str,
+        body_text: str,
+    ) -> str:
+        """Post a plain-text message to a Teams channel. Returns the new message id.
+
+        Per spec § 2.3 Option B: messages are plain-text (not Adaptive Cards).
+        Recipients reply in-thread with APPROVE / EDIT <body> / REJECT <reason>.
+        """
+        ...
+
+    async def list_channel_replies(
+        self,
+        *,
+        team_id: str,
+        channel_id: str,
+        message_id: str,
+    ) -> list[ChannelReply]:
+        """List replies in the thread of a given parent message."""
+        ...
+
+    async def send_mail(
+        self,
+        *,
+        to: list[str],
+        cc: list[str],
+        subject: str,
+        body_text: str,
+        in_reply_to_message_id: str | None = None,
+    ) -> None:
+        """Send an email from the watched inbox via Graph /me/sendMail."""
         ...
 
 
@@ -264,6 +313,114 @@ class GraphAdapter:
         finally:
             if owns_http:
                 await http.aclose()
+
+    # ------------------------------------------------------- Teams + email
+
+    async def post_channel_message(
+        self,
+        *,
+        team_id: str,
+        channel_id: str,
+        body_text: str,
+    ) -> str:
+        try:
+            from msgraph.generated.models.chat_message import ChatMessage
+            from msgraph.generated.models.item_body import ItemBody
+
+            body = ItemBody(content=body_text)
+            payload = ChatMessage(body=body)
+            response = await (
+                self._client.teams.by_team_id(team_id)
+                .channels.by_channel_id(channel_id)
+                .messages.post(body=payload)
+            )
+            if response is None or getattr(response, "id", None) is None:
+                raise GraphError(
+                    f"post_channel_message returned no message id "
+                    f"(team={team_id} channel={channel_id})"
+                )
+            return str(response.id)
+        except GraphError:
+            raise
+        except Exception as exc:
+            raise GraphError(f"post_channel_message failed: {exc}") from exc
+
+    async def list_channel_replies(
+        self,
+        *,
+        team_id: str,
+        channel_id: str,
+        message_id: str,
+    ) -> list[ChannelReply]:
+        try:
+            response = await (
+                self._client.teams.by_team_id(team_id)
+                .channels.by_channel_id(channel_id)
+                .messages.by_chat_message_id(message_id)
+                .replies.get()
+            )
+            replies_raw = list(getattr(response, "value", []) or [])
+            out: list[ChannelReply] = []
+            for r in replies_raw:
+                body = getattr(r, "body", None)
+                content = getattr(body, "content", "") or ""
+                user = getattr(getattr(r, "from_", None), "user", None)
+                out.append(
+                    ChannelReply(
+                        reply_id=str(getattr(r, "id", "")),
+                        body_text=str(content),
+                        author_id=str(getattr(user, "id", "") or ""),
+                        author_name=str(getattr(user, "display_name", "") or ""),
+                        created_at=getattr(r, "created_date_time", datetime.fromtimestamp(0)),
+                    )
+                )
+            return out
+        except Exception as exc:
+            raise GraphError(f"list_channel_replies failed: {exc}") from exc
+
+    async def send_mail(
+        self,
+        *,
+        to: list[str],
+        cc: list[str],
+        subject: str,
+        body_text: str,
+        in_reply_to_message_id: str | None = None,
+    ) -> None:
+        try:
+            from msgraph.generated.models.body_type import BodyType
+            from msgraph.generated.models.email_address import EmailAddress
+            from msgraph.generated.models.item_body import ItemBody
+            from msgraph.generated.models.message import Message
+            from msgraph.generated.models.recipient import Recipient
+            from msgraph.generated.users.item.send_mail.send_mail_post_request_body import (
+                SendMailPostRequestBody,
+            )
+
+            def _to_recipients(addrs: list[str]) -> list[Recipient]:
+                return [Recipient(email_address=EmailAddress(address=a)) for a in addrs]
+
+            msg = Message(
+                subject=subject,
+                body=ItemBody(content_type=BodyType.Text, content=body_text),
+                to_recipients=_to_recipients(to),
+                cc_recipients=_to_recipients(cc),
+            )
+            if in_reply_to_message_id:
+                # Graph supports threading via internetMessageHeaders / conversation_id;
+                # for v1 we use replyAll under /me/messages/<id>/replyAll if reply id
+                # is set. Defer to a wrapper for cleanliness.
+                await (
+                    self._client.me.messages.by_message_id(in_reply_to_message_id)
+                    .reply.post(
+                        body={"comment": body_text, "message": {"subject": subject}}
+                    )
+                )
+                return
+            request = SendMailPostRequestBody(message=msg, save_to_sent_items=True)
+            await self._client.me.send_mail.post(body=request)
+        except Exception as exc:
+            raise GraphError(f"send_mail failed: {exc}") from exc
 
     # ----------------------------------------------------------- credentials
 

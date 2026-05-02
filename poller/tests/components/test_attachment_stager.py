@@ -57,6 +57,27 @@ class _FakeGraph:
         )
         return drive_item_path
 
+    async def post_channel_message(
+        self, *, team_id: str, channel_id: str, body_text: str
+    ) -> str:
+        raise NotImplementedError
+
+    async def list_channel_replies(
+        self, *, team_id: str, channel_id: str, message_id: str
+    ) -> list[Any]:
+        raise NotImplementedError
+
+    async def send_mail(
+        self,
+        *,
+        to: list[str],
+        cc: list[str],
+        subject: str,
+        body_text: str,
+        in_reply_to_message_id: str | None = None,
+    ) -> None:
+        raise NotImplementedError
+
 
 @pytest.fixture
 def memory(tmp_path: Path) -> MemoryStoreClient:
