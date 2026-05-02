@@ -246,3 +246,52 @@ async def test_ingestion_step_blocked_with_email_draft_validates_subset() -> Non
     assert outcome.envelope.status == "blocked"
     assert outcome.manifest.client_email_draft is not None
     assert outcome.manifest.client_email_draft.language == "es"
+
+
+class _ErroredSessionBackend:
+    """Backend returns is_error=True; step must raise rather than parse."""
+
+    def __init__(self, *, stop_reason: str = "requires_action") -> None:
+        self.stop_reason = stop_reason
+
+    async def run_session(
+        self,
+        *,
+        agent_id: str,
+        environment_id: str | None,
+        kickoff_text: str,
+        cache_control_blocks: list[dict[str, Any]] | None = None,
+        capture_files: list[str] | None = None,
+        beta_headers: list[str] | None = None,
+    ) -> SessionResult:
+        del agent_id, environment_id, kickoff_text
+        del cache_control_blocks, capture_files, beta_headers
+        return SessionResult(
+            session_id="sess_errored",
+            stop_reason=self.stop_reason,
+            final_message_text="",
+            captured_files={},
+            is_error=True,
+        )
+
+
+async def test_ingestion_step_raises_when_session_reports_is_error() -> None:
+    """is_error=True must surface as AnthropicError so the orchestrator records
+    the failure in summary.errors and skips the status_ok card. Parsing the
+    (empty) envelope/manifest is not the right error message — it would point
+    a debugger at JSON parsing rather than at the real session failure."""
+    adapter = AnthropicSessionsAdapter(backend=_ErroredSessionBackend())
+    step = IngestionStep(sessions=adapter, agent_id="agent_ingestion")
+
+    with pytest.raises(AnthropicError, match="reported errors mid-stream"):
+        await step.run(_kickoff())
+
+
+async def test_ingestion_step_error_includes_stop_reason() -> None:
+    adapter = AnthropicSessionsAdapter(
+        backend=_ErroredSessionBackend(stop_reason="timeout")
+    )
+    step = IngestionStep(sessions=adapter, agent_id="agent_ingestion")
+
+    with pytest.raises(AnthropicError, match="timeout"):
+        await step.run(_kickoff())

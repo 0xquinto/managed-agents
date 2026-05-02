@@ -56,6 +56,12 @@ class IngestionStep:
             capture_files=[manifest_path],
         )
 
+        if result.is_error:
+            raise AnthropicError(
+                f"ingestion session {result.session_id} reported errors mid-stream "
+                f"(stop_reason={result.stop_reason!r})"
+            )
+
         envelope = self._parse_envelope(result)
         manifest = self._parse_manifest(result, manifest_path)
 

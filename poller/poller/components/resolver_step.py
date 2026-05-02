@@ -41,7 +41,13 @@ class ResolverStep:
         self._environment_id = environment_id
 
     async def run(self, kickoff: ResolverKickoff) -> ResolverOutcome:
-        """Send the kickoff, parse the envelope, return the outcome."""
+        """Send the kickoff, parse the envelope, return the outcome.
+
+        If the session reported a stream-level error or a non-end_turn idle
+        (requires_action / retries_exhausted / terminated / timeout), raises
+        `AnthropicError`. Without this, the orchestrator would post a status_ok
+        card on a session that errored mid-stream — silent ingestion lies.
+        """
         kickoff_text = self._build_kickoff_text(kickoff)
         cache_blocks = self._build_cache_control(kickoff)
 
@@ -52,6 +58,12 @@ class ResolverStep:
             cache_control_blocks=cache_blocks,
             capture_files=None,
         )
+
+        if result.is_error:
+            raise AnthropicError(
+                f"resolver session {result.session_id} reported errors mid-stream "
+                f"(stop_reason={result.stop_reason!r})"
+            )
 
         envelope = self._parse_envelope(result)
         return ResolverOutcome(

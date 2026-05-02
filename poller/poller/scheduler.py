@@ -1,20 +1,22 @@
-"""Scheduler entrypoint — `python -m poller.scheduler` runs one poll cycle.
+"""Scheduler entrypoint — `python -m poller` runs one poll cycle and exits.
 
 Designed for cron / Azure Function timer trigger / GitHub Actions schedule.
 Spec § 2.1: default N = 5 min cadence, set by the surrounding scheduler — the
-process itself is idempotent and one-shot.
+process itself is idempotent and one-shot, no internal loop.
 
 Wiring: builds adapters from environment via Settings.from_env (Phase 1), wires
 together every component, runs Orchestrator.run_cycle, prints a one-line
-CycleSummary to stdout, exits with code 0 on no errors / 1 if any.
+CycleSummary as JSON to stdout, exits with code 0 on no errors / 1 if any.
 
 This module is intentionally thin so tests can import-and-call run_one_cycle
-without subprocess plumbing. The CLI entrypoint is the bottom of this file.
+without subprocess plumbing. The CLI entrypoint is `cli_main`, invoked from
+`poller/__main__.py`.
 """
 
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 import logging
 import sys
@@ -22,14 +24,13 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 
 from poller.adapters.anthropic_sessions import (
+    AnthropicSDKSessionsBackend,
     AnthropicSessionsAdapter,
     AnthropicSessionsBackend,
-    StubAnthropicSessionsBackend,
 )
 from poller.adapters.graph import GraphAdapter, GraphAdapterProtocol
 from poller.adapters.memory import (
     AnthropicMemoryBackend,
-    LocalFilesystemBackend,
     MemoryBackendProtocol,
     MemoryStoreClient,
 )
@@ -64,7 +65,7 @@ def _build_orchestrator(
     """Assemble an Orchestrator from settings + (optionally) injected adapters.
 
     The default adapters are production-shaped (GraphAdapter via client-creds,
-    AnthropicMemoryBackend, StubAnthropicSessionsBackend). Tests pass fakes via
+    AnthropicMemoryBackend, AnthropicSDKSessionsBackend). Tests pass fakes via
     keyword args.
     """
     graph_adapter: GraphAdapterProtocol = graph or GraphAdapter.from_client_credentials(
@@ -83,8 +84,9 @@ def _build_orchestrator(
         )
     memory = MemoryStoreClient(backend=memory_be)
 
-    sessions_be: AnthropicSessionsBackend = (
-        sessions_backend or StubAnthropicSessionsBackend(api_key=settings.anthropic_api_key)
+    sessions_be: AnthropicSessionsBackend = sessions_backend or AnthropicSDKSessionsBackend(
+        api_key=settings.anthropic_api_key,
+        default_environment_id=settings.insignia_environment_id,
     )
     sessions = AnthropicSessionsAdapter(backend=sessions_be)
 
@@ -100,11 +102,15 @@ def _build_orchestrator(
             clock=clock or (lambda: datetime.now(tz=UTC).timestamp()),
         ),
         resolver_step=ResolverStep(
-            sessions=sessions, agent_id=settings.insignia_resolver_agent_id
+            sessions=sessions,
+            agent_id=settings.insignia_resolver_agent_id,
+            environment_id=settings.insignia_environment_id,
         ),
         attachment_stager=AttachmentStager(graph=graph_adapter, memory=memory),
         ingestion_step=IngestionStep(
-            sessions=sessions, agent_id=settings.insignia_ingestion_v3_agent_id
+            sessions=sessions,
+            agent_id=settings.insignia_ingestion_v3_agent_id,
+            environment_id=settings.insignia_environment_id,
         ),
         manifest_step=ManifestStep(),
         teams_poster=TeamsCardPoster(
@@ -128,29 +134,40 @@ async def run_one_cycle(
     return await orchestrator.run_cycle()
 
 
-def _cli_main() -> int:
+def cli_main(argv: list[str] | None = None) -> int:
+    """One-shot CLI entrypoint. Usage: `python -m poller`.
+
+    Returns 0 on a clean cycle (`CycleSummary.errors == []`), 1 otherwise.
+    Errors during settings load (missing env vars) print a one-line message
+    to stderr and exit 2 — distinguishable from cycle errors so an Azure
+    Function / cron host can alert on them differently.
+    """
+    del argv  # no flags in v1; kept for future --once / --dry-run / etc.
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
-    summary = asyncio.run(run_one_cycle())
-    print(json.dumps(summary.__dict__, indent=2))
+    try:
+        settings = Settings.from_env()
+    except ValueError as exc:
+        print(f"poller: configuration error: {exc}", file=sys.stderr)
+        return 2
+
+    summary = asyncio.run(run_one_cycle(settings=settings))
+    print(json.dumps(dataclasses.asdict(summary), indent=2))
     return 0 if not summary.errors else 1
 
 
-def _local_dev_orchestrator(
-    *,
-    memory_root: str,
-    settings: Settings | None = None,
-) -> Orchestrator:
-    """Convenience for local dev: filesystem memory backend instead of API."""
-    from pathlib import Path
-    s = settings or Settings.from_env()
-    return _build_orchestrator(
-        settings=s,
-        memory_backend=LocalFilesystemBackend(root=Path(memory_root)),
-    )
+# Re-exported for `python -m poller` convenience. Tests import it directly.
+__all__ = [
+    "Orchestrator",
+    "Settings",
+    "cli_main",
+    "run_one_cycle",
+    "_build_orchestrator",
+]
 
 
+# Backward-compat shim — older docs / tests may invoke `python -m poller.scheduler`.
 if __name__ == "__main__":  # pragma: no cover
-    sys.exit(_cli_main())
+    sys.exit(cli_main())
