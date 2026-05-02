@@ -28,6 +28,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
+from poller.adapters.graph import GraphAdapterProtocol
 from poller.adapters.memory import MemoryStoreClient
 from poller.components.attachment_stager import AttachmentStager
 from poller.components.email_gate import EmailGate, GateDecision
@@ -74,6 +75,7 @@ class Orchestrator:
     def __init__(
         self,
         *,
+        graph: GraphAdapterProtocol,
         mail_feed: MailFeed,
         email_gate: EmailGate,
         resolver_step: ResolverStep,
@@ -85,6 +87,7 @@ class Orchestrator:
         memory: MemoryStoreClient,
         contract_channel_resolver: ContractChannelResolver,
     ) -> None:
+        self._graph = graph
         self._mail = mail_feed
         self._gate = email_gate
         self._resolver = resolver_step
@@ -146,12 +149,21 @@ class Orchestrator:
         return summary
 
     async def _process_email(self, email: EmailMeta, summary: CycleSummary) -> None:
-        # The poller only sees raw_attachments after a Graph-side download, which
-        # MailFeed doesn't currently fetch — Phase 2 left this as a v1 follow-up
-        # (spec § 6.1 attachment-fetch order). For v1 cycle wiring, the
-        # orchestrator assumes the mail feed has populated raw_attachments via a
-        # downstream extension. If empty, EmailGate Stage 1 rejects naturally.
-        raw_attachments: list[dict[str, object]] = []  # TODO Phase 4 follow-up
+        # Fetch attachment metadata + bytes for this message before EmailGate.
+        # Per spec § 6.1: the poller is the attachment-fetch boundary. EmailGate
+        # needs metadata for stages 1-2 (count, isInline, size, content_type)
+        # and bytes for stage 3 (sha256 dedup). Item-attachment / reference
+        # kinds come back with content_type="x-graph-itemattachment/..." and
+        # are stripped by stage 2 alongside cosmetic images.
+        try:
+            raw_attachments = await self._graph.list_message_attachments(
+                message_id=email.messageId
+            )
+        except PollerError as exc:
+            summary.errors.append(
+                f"email {email.messageId}: list_message_attachments failed: {exc}"
+            )
+            return
         decision: GateDecision = self._gate.evaluate(
             email=email, raw_attachments=raw_attachments
         )
@@ -282,7 +294,7 @@ class Orchestrator:
             raw = self._memory.read_json(ChannelReplyPoll.PENDING_KEY)
             if isinstance(raw, list):
                 existing = list(raw)
-        existing.append(card.__dict__)
+        existing.append(card.to_dict())
         self._memory.write_json(ChannelReplyPoll.PENDING_KEY, existing)
 
 

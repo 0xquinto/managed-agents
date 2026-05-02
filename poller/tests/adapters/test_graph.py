@@ -146,3 +146,98 @@ def test_graph_adapter_from_client_credentials() -> None:
 
     assert isinstance(adapter, GraphAdapter)
     assert adapter._client is not None
+
+
+
+async def test_send_mail_direct_includes_to_and_cc() -> None:
+    """When not replying, send_mail must hand /me/sendMail a Message with all
+    recipients populated.
+    """
+    fake_client = MagicMock()
+    fake_client.me.send_mail.post = AsyncMock()
+
+    adapter = GraphAdapter(client=fake_client)
+    await adapter.send_mail(
+        to=["ana@tafi.com.ar"],
+        cc=["jorge@tafi.com.ar"],
+        subject="Faltan documentos",
+        body_text="Hola, faltan los EE.FF.",
+    )
+
+    fake_client.me.send_mail.post.assert_awaited_once()
+    request = fake_client.me.send_mail.post.await_args.kwargs["body"]
+    msg = request.message
+    to_addrs = [r.email_address.address for r in msg.to_recipients]
+    cc_addrs = [r.email_address.address for r in msg.cc_recipients]
+    assert to_addrs == ["ana@tafi.com.ar"]
+    assert cc_addrs == ["jorge@tafi.com.ar"]
+    assert msg.body.content == "Hola, faltan los EE.FF."
+
+
+async def test_send_mail_reply_preserves_recipients_and_body() -> None:
+    """Regression: send_mail's reply branch must NOT silently drop to/cc/body.
+
+    Before fix: the reply branch posted only `{"comment": body, "message":
+    {"subject": subject}}` to /reply, dropping to/cc/body entirely so the
+    HITL APPROVE flow sent with no recipients.
+
+    Fix: createReply → PATCH draft with our Message → send draft. This test
+    asserts the PATCH carries our to/cc/body and the send call fires.
+    """
+    fake_client = MagicMock()
+    # createReply returns a draft with an id.
+    draft = MagicMock(id="draft-99")
+    fake_client.me.messages.by_message_id.return_value.create_reply.post = AsyncMock(
+        return_value=draft
+    )
+    fake_client.me.messages.by_message_id.return_value.patch = AsyncMock()
+    fake_client.me.messages.by_message_id.return_value.send.post = AsyncMock()
+
+    adapter = GraphAdapter(client=fake_client)
+    await adapter.send_mail(
+        to=["ana@tafi.com.ar"],
+        cc=[],
+        subject="(Re:) Faltan documentos",
+        body_text="Hola Ana, gracias por la confirmación. ...",
+        in_reply_to_message_id="msg-original-1",
+    )
+
+    # createReply was called against the original message id.
+    fake_client.me.messages.by_message_id.assert_any_call("msg-original-1")
+    fake_client.me.messages.by_message_id.return_value.create_reply.post.assert_awaited_once()
+
+    # PATCH was called against the draft id with our overrides.
+    fake_client.me.messages.by_message_id.assert_any_call("draft-99")
+    patch_call = fake_client.me.messages.by_message_id.return_value.patch
+    patch_call.assert_awaited_once()
+    overrides = patch_call.await_args.kwargs["body"]
+    to_addrs = [r.email_address.address for r in overrides.to_recipients]
+    assert to_addrs == ["ana@tafi.com.ar"], (
+        "regression: reply lost to_recipients (the original send_mail bug)"
+    )
+    assert overrides.body.content == "Hola Ana, gracias por la confirmación. ..."
+
+    # Final send was issued.
+    fake_client.me.messages.by_message_id.return_value.send.post.assert_awaited_once()
+
+
+async def test_send_mail_reply_raises_when_create_reply_returns_no_id() -> None:
+    """If Graph's createReply returns a malformed response, fail loudly — don't
+    silently no-op (which the original buggy stripped-down POST would do too).
+    """
+    fake_client = MagicMock()
+    draft_no_id = MagicMock()
+    draft_no_id.id = None
+    fake_client.me.messages.by_message_id.return_value.create_reply.post = AsyncMock(
+        return_value=draft_no_id
+    )
+
+    adapter = GraphAdapter(client=fake_client)
+    with pytest.raises(GraphError, match="createReply.*no draft id"):
+        await adapter.send_mail(
+            to=["x@y.com"],
+            cc=[],
+            subject="Re:",
+            body_text="body",
+            in_reply_to_message_id="msg-1",
+        )

@@ -17,6 +17,7 @@ contract.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from poller.adapters.graph import GraphAdapterProtocol
@@ -33,9 +34,32 @@ class ChannelRef:
     channel_id: str
 
 
+CARD_POST_RESULT_SCHEMA_VERSION = 1
+
+
+def _coerce_schema_version(v: object) -> int:
+    """Best-effort coerce a persisted schema_version to int; default to 1."""
+    if v is None:
+        return 1
+    if isinstance(v, int):
+        return v
+    if isinstance(v, str):
+        try:
+            return int(v)
+        except ValueError:
+            return 1
+    return 1
+
+
 @dataclass(frozen=True)
 class CardPostResult:
-    """Result of posting a card. The message_id is the parent of the reply thread."""
+    """Result of posting a card. The message_id is the parent of the reply thread.
+
+    Persisted to memory under `pending_cards.json` between cycles. The
+    `schema_version` field exists so future field additions / removals can be
+    handled tolerantly by `from_dict()` instead of crashing on every persisted
+    card from before the deploy.
+    """
 
     kind: str  # "status_ok" | "client_email_draft" | "triage" | "degraded"
     team_id: str
@@ -43,6 +67,47 @@ class CardPostResult:
     message_id: str
     contract_id: str | None
     callback_id: str  # opaque correlation id for HITL resume tracking
+    schema_version: int = CARD_POST_RESULT_SCHEMA_VERSION
+
+    def to_dict(self) -> dict[str, object]:
+        """Serialize for memory persistence — always includes schema_version."""
+        return {
+            "schema_version": self.schema_version,
+            "kind": self.kind,
+            "team_id": self.team_id,
+            "channel_id": self.channel_id,
+            "message_id": self.message_id,
+            "contract_id": self.contract_id,
+            "callback_id": self.callback_id,
+        }
+
+    @classmethod
+    def from_dict(cls, raw: Mapping[str, object]) -> CardPostResult:
+        """Tolerant loader. Drops unknown keys, defaults missing schema_version
+        to 1, raises clearly when a *required* field (kind / team_id /
+        channel_id / message_id / callback_id) is absent.
+
+        Forward-compat: future versions can add fields with defaults; older
+        cards round-trip cleanly because the loader fills in the default and
+        ignores any keys this codebase doesn't recognize.
+        """
+        required = ("kind", "team_id", "channel_id", "message_id", "callback_id")
+        missing = [k for k in required if k not in raw]
+        if missing:
+            raise ValueError(
+                f"CardPostResult.from_dict missing required keys: {missing}"
+            )
+        return cls(
+            kind=str(raw["kind"]),
+            team_id=str(raw["team_id"]),
+            channel_id=str(raw["channel_id"]),
+            message_id=str(raw["message_id"]),
+            contract_id=(
+                str(raw["contract_id"]) if raw.get("contract_id") is not None else None
+            ),
+            callback_id=str(raw["callback_id"]),
+            schema_version=_coerce_schema_version(raw.get("schema_version")),
+        )
 
 
 class TeamsCardPoster:

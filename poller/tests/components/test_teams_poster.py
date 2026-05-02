@@ -43,6 +43,11 @@ class _FakeGraph:
     ) -> bytes:
         raise NotImplementedError
 
+    async def list_message_attachments(
+        self, *, message_id: str
+    ) -> list[dict[str, Any]]:
+        raise NotImplementedError
+
     async def upload_to_onedrive_via_session(
         self,
         *,

@@ -66,6 +66,25 @@ class GraphAdapterProtocol(Protocol):
         """Download one email attachment by id. Returns the raw bytes."""
         ...
 
+    async def list_message_attachments(
+        self,
+        *,
+        message_id: str,
+    ) -> list[dict[str, Any]]:
+        """Return all attachments on a message with metadata + bytes.
+
+        Each entry has the shape EmailGate.evaluate() expects:
+          {message_attachment_id, filename, size, content_type, isInline,
+           content_bytes}
+
+        Bytes are populated for FileAttachment items only; item-attachment /
+        reference-attachment kinds (calendar invites, OneDrive links) are
+        returned with content_bytes=b"" and a content_type prefixed
+        "x-graph-itemattachment/" so EmailGate's cosmetic-strip stage can drop
+        them without inventing special cases.
+        """
+        ...
+
     async def upload_to_onedrive_via_session(
         self,
         *,
@@ -206,6 +225,46 @@ class GraphAdapter:
         except Exception as exc:
             raise GraphError(
                 f"failed to download attachment {attachment_id}: {exc}"
+            ) from exc
+
+    async def list_message_attachments(
+        self,
+        *,
+        message_id: str,
+    ) -> list[dict[str, Any]]:
+        try:
+            response = await (
+                self._client.me.messages.by_message_id(message_id)
+                .attachments.get()
+            )
+            raw = list(getattr(response, "value", []) or [])
+            out: list[dict[str, Any]] = []
+            for att in raw:
+                content_bytes_attr = getattr(att, "content_bytes", None)
+                if content_bytes_attr is None:
+                    out.append({
+                        "message_attachment_id": str(getattr(att, "id", "")),
+                        "filename": str(getattr(att, "name", "") or ""),
+                        "size": int(getattr(att, "size", 0) or 0),
+                        "content_type": "x-graph-itemattachment/unknown",
+                        "isInline": bool(getattr(att, "is_inline", False)),
+                        "content_bytes": b"",
+                    })
+                    continue
+                out.append({
+                    "message_attachment_id": str(getattr(att, "id", "")),
+                    "filename": str(getattr(att, "name", "") or ""),
+                    "size": int(getattr(att, "size", 0) or 0),
+                    "content_type": str(
+                        getattr(att, "content_type", "") or "application/octet-stream"
+                    ),
+                    "isInline": bool(getattr(att, "is_inline", False)),
+                    "content_bytes": bytes(content_bytes_attr),
+                })
+            return out
+        except Exception as exc:
+            raise GraphError(
+                f"list_message_attachments failed for message {message_id}: {exc}"
             ) from exc
 
     async def upload_to_onedrive_via_session(
@@ -387,6 +446,15 @@ class GraphAdapter:
         body_text: str,
         in_reply_to_message_id: str | None = None,
     ) -> None:
+        """Send mail (or a thread reply) preserving all recipients + body.
+
+        The reply path uses /me/messages/{id}/createReply → patch the resulting
+        draft with our to/cc/body → send. This three-step pattern is the only
+        way to BOTH preserve the conversationId thread AND override the
+        recipients (Graph defaults reply recipients to the original sender;
+        for our HITL flow we want the draft addressed to whoever the agent
+        decided, not whoever clicked APPROVE).
+        """
         try:
             from msgraph.generated.models.body_type import BodyType
             from msgraph.generated.models.email_address import EmailAddress
@@ -407,20 +475,56 @@ class GraphAdapter:
                 cc_recipients=_to_recipients(cc),
             )
             if in_reply_to_message_id:
-                # Graph supports threading via internetMessageHeaders / conversation_id;
-                # for v1 we use replyAll under /me/messages/<id>/replyAll if reply id
-                # is set. Defer to a wrapper for cleanliness.
-                await (
-                    self._client.me.messages.by_message_id(in_reply_to_message_id)
-                    .reply.post(
-                        body={"comment": body_text, "message": {"subject": subject}}
-                    )
+                await self._send_reply(
+                    in_reply_to_message_id=in_reply_to_message_id,
+                    overrides=msg,
                 )
                 return
+
             request = SendMailPostRequestBody(message=msg, save_to_sent_items=True)
             await self._client.me.send_mail.post(body=request)
+        except GraphError:
+            raise
         except Exception as exc:
             raise GraphError(f"send_mail failed: {exc}") from exc
+
+    async def _send_reply(
+        self,
+        *,
+        in_reply_to_message_id: str,
+        overrides: Any,
+    ) -> None:
+        """Three-step Graph reply: createReply → patch draft → send.
+
+        `overrides` is a Message with the to/cc/body/subject we want on the
+        outgoing reply. The intermediate draft is mutated in place via PATCH so
+        Graph keeps the conversationId from the original message.
+        """
+        # Step 1 — createReply produces an unsent draft Message with
+        # auto-populated thread headers + default recipients. We update the
+        # draft's recipients + body to our overrides, then send.
+        draft = await (
+            self._client.me.messages.by_message_id(in_reply_to_message_id)
+            .create_reply.post(body=None)
+        )
+        draft_id = getattr(draft, "id", None)
+        if not draft_id:
+            raise GraphError(
+                f"createReply for message {in_reply_to_message_id} returned no draft id"
+            )
+
+        # Step 2 — PATCH the draft with our recipients + body. We do NOT
+        # overwrite subject (Graph already prefixed "Re: ").
+        await (
+            self._client.me.messages.by_message_id(str(draft_id))
+            .patch(body=overrides)
+        )
+
+        # Step 3 — send the now-fully-populated draft.
+        await (
+            self._client.me.messages.by_message_id(str(draft_id))
+            .send.post()
+        )
 
     # ----------------------------------------------------------- credentials
 

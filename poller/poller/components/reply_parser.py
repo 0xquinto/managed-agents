@@ -260,12 +260,12 @@ class ChannelReplyPoll:
         raw = self._memory.read_json(self.PENDING_KEY)
         if not isinstance(raw, list):
             return []
-        return [CardPostResult(**entry) for entry in raw]
+        return [CardPostResult.from_dict(entry) for entry in raw]
 
     def _write_pending(self, cards: list[CardPostResult]) -> None:
         self._memory.write_json(
             self.PENDING_KEY,
-            [card.__dict__ for card in cards],
+            [card.to_dict() for card in cards],
         )
 
     def _read_bot_ids(self) -> list[str]:

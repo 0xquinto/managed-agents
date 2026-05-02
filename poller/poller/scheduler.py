@@ -93,6 +93,7 @@ def _build_orchestrator(
     )
 
     return Orchestrator(
+        graph=graph_adapter,
         mail_feed=MailFeed(graph=graph_adapter, memory=memory),
         email_gate=EmailGate(
             memory=memory,

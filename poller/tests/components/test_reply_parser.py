@@ -132,6 +132,11 @@ class _FakeGraph:
     ) -> bytes:
         raise NotImplementedError
 
+    async def list_message_attachments(
+        self, *, message_id: str
+    ) -> list[dict[str, Any]]:
+        raise NotImplementedError
+
     async def upload_to_onedrive_via_session(
         self,
         *,
@@ -289,3 +294,116 @@ async def test_collect_with_empty_pending(memory: MemoryStoreClient) -> None:
     assert result.draft_decisions == {}
     assert result.triage_decisions == {}
     assert result.still_pending == []
+
+
+# CardPostResult round-trip persistence ------------------------------------
+
+
+def test_card_post_result_round_trip(memory: MemoryStoreClient) -> None:
+    """to_dict / from_dict round-trips a card without loss."""
+    card = CardPostResult(
+        kind="client_email_draft",
+        team_id="t-1",
+        channel_id="c-1",
+        message_id="m-1",
+        contract_id="INS-2026-007",
+        callback_id="cb-1",
+    )
+    raw = card.to_dict()
+    assert raw["schema_version"] == 1
+    restored = CardPostResult.from_dict(raw)
+    assert restored == card
+
+
+def test_card_post_result_from_dict_tolerates_unknown_keys(
+    memory: MemoryStoreClient,
+) -> None:
+    """A future-version card with an extra key still loads cleanly."""
+    raw = {
+        "schema_version": 2,
+        "kind": "client_email_draft",
+        "team_id": "t",
+        "channel_id": "c",
+        "message_id": "m",
+        "contract_id": "INS-2026-007",
+        "callback_id": "cb",
+        "future_field_we_dont_know_yet": {"nested": True},
+    }
+    card = CardPostResult.from_dict(raw)
+    assert card.kind == "client_email_draft"
+    assert card.schema_version == 2
+
+
+def test_card_post_result_from_dict_defaults_missing_schema_version(
+    memory: MemoryStoreClient,
+) -> None:
+    """A card persisted before schema_version was introduced still loads."""
+    raw = {
+        "kind": "triage",
+        "team_id": "t",
+        "channel_id": "c",
+        "message_id": "m",
+        "contract_id": None,
+        "callback_id": "cb",
+    }
+    card = CardPostResult.from_dict(raw)
+    assert card.schema_version == 1
+
+
+def test_card_post_result_from_dict_raises_on_missing_required(
+    memory: MemoryStoreClient,
+) -> None:
+    """Missing a required key (e.g., callback_id) should fail loudly."""
+    raw = {
+        "kind": "triage",
+        "team_id": "t",
+        "channel_id": "c",
+        "message_id": "m",
+        "contract_id": None,
+    }
+    with pytest.raises(ValueError, match="callback_id"):
+        CardPostResult.from_dict(raw)
+
+
+async def test_pending_cards_round_trip_through_poll(
+    memory: MemoryStoreClient,
+) -> None:
+    """End-to-end: write pending → re-read via ChannelReplyPoll uses from_dict."""
+    card = CardPostResult(
+        kind="client_email_draft",
+        team_id="t",
+        channel_id="c",
+        message_id="m-trip-1",
+        contract_id="INS-2026-007",
+        callback_id="cb-trip-1",
+    )
+    memory.write_json("pending_cards.json", [card.to_dict()])
+
+    graph = _FakeGraph({"m-trip-1": []})
+    poll = ChannelReplyPoll(graph=graph, memory=memory)
+    result = await poll.collect()
+    assert len(result.still_pending) == 1
+    assert result.still_pending[0] == card
+
+
+async def test_pending_cards_load_tolerates_future_extra_keys(
+    memory: MemoryStoreClient,
+) -> None:
+    """A pending_cards.json written by a future version round-trips harmlessly."""
+    raw = {
+        "schema_version": 99,
+        "kind": "triage",
+        "team_id": "t",
+        "channel_id": "c",
+        "message_id": "m-future",
+        "contract_id": None,
+        "callback_id": "cb-future",
+        "extra_unknown_field": [1, 2, 3],
+    }
+    memory.write_json("pending_cards.json", [raw])
+
+    graph = _FakeGraph({"m-future": []})
+    poll = ChannelReplyPoll(graph=graph, memory=memory)
+    result = await poll.collect()
+    assert len(result.still_pending) == 1
+    assert result.still_pending[0].schema_version == 99
