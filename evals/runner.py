@@ -132,7 +132,39 @@ def build_resources(case_dir: Path, file_overrides: dict[str, str]) -> tuple[lis
     return out, resolved
 
 
-def list_paraphrases(case_dir: Path, requested: str | None) -> list[str]:
+RESOLVER_PARAPHRASE = "canonical"
+
+
+def detect_role(case: str) -> str:
+    """resolver | ingestion. Spec § 7.4 — resolver slices live under evals/resolver/*.
+
+    Differences resolver triggers in the runner: single inline kickoff.json
+    (no paraphrase fan-out), no resources.json / file uploads, no container
+    artifacts to capture (envelope-only output).
+    """
+    return "resolver" if case.split("/", 1)[0] == "resolver" else "ingestion"
+
+
+def kickoff_path(case_dir: Path, paraphrase: str, role: str) -> Path:
+    if role == "resolver":
+        return case_dir / "kickoff.json"
+    return case_dir / f"kickoff_{paraphrase}.json"
+
+
+def list_paraphrases(case_dir: Path, requested: str | None, role: str = "ingestion") -> list[str]:
+    if role == "resolver":
+        # Resolver slices have a single inline kickoff (no paraphrase axis).
+        # The `--paraphrases` flag is ignored — fail loudly if the user passed
+        # something other than the canonical id rather than silently dropping
+        # their selection.
+        if not (case_dir / "kickoff.json").exists():
+            raise RuntimeError(f"No kickoff.json in resolver case {case_dir}")
+        if requested not in (None, "all", RESOLVER_PARAPHRASE):
+            raise RuntimeError(
+                f"Resolver slices have no paraphrase fan-out; --paraphrases={requested!r} "
+                f"is not supported. Drop the flag or pass {RESOLVER_PARAPHRASE!r}."
+            )
+        return [RESOLVER_PARAPHRASE]
     available = sorted(
         re.sub(r"^kickoff_|\.json$", "", p.name)
         for p in case_dir.glob("kickoff_*.json")
@@ -272,18 +304,18 @@ def fetch_container_file(session_id: str, container_path: str) -> str | None:
 
 def run_trial(case_dir: Path, paraphrase: str, trial_idx: int, agent_id: str, env_id: str,
               resources: list[dict], out_dir: Path, timeout_seconds: int,
-              container_paths: list[str], dry_run: bool) -> dict:
+              container_paths: list[str], dry_run: bool, role: str = "ingestion") -> dict:
     trial_id = f"{paraphrase}_{trial_idx:03d}"
     trial_dir = out_dir / "trials" / trial_id
     trial_dir.mkdir(parents=True, exist_ok=True)
 
-    kickoff_path = case_dir / f"kickoff_{paraphrase}.json"
-    kickoff = json.loads(kickoff_path.read_text())
+    kickoff_file = kickoff_path(case_dir, paraphrase, role)
+    kickoff = json.loads(kickoff_file.read_text())
 
     summary = {
         "trial_id": trial_id,
         "paraphrase": paraphrase,
-        "kickoff_sha256": sha256_path(kickoff_path),
+        "kickoff_sha256": sha256_path(kickoff_file),
         "started_at": now_z(),
         "session_id": None,
         "session_final_status": None,
@@ -315,10 +347,12 @@ def run_trial(case_dir: Path, paraphrase: str, trial_idx: int, agent_id: str, en
 
         envelope_text = extract_envelope(events)
         if envelope_text:
-            (trial_dir / "ingestion_final_envelope.json").write_text(envelope_text.strip())
+            envelope_filename = f"{role}_final_envelope.json"
+            (trial_dir / envelope_filename).write_text(envelope_text.strip())
             summary["envelope_captured"] = True
 
-        for container_path in container_paths:
+        # Resolver agents return envelope-only — no container artifacts to fetch.
+        for container_path in container_paths if role != "resolver" else []:
             fname = container_path.split("/")[-1]
             try:
                 content = fetch_container_file(session_id, container_path)
@@ -342,7 +376,14 @@ def run_trial(case_dir: Path, paraphrase: str, trial_idx: int, agent_id: str, en
 
 
 def fetch_agent_meta(agent_id: str) -> dict:
-    res = run_ant(["beta:agents", "retrieve", "--agent-id", agent_id])
+    try:
+        res = run_ant(["beta:agents", "retrieve", "--agent-id", agent_id])
+    except RuntimeError as e:
+        # Manifest emission must not crash the runner if agent retrieve
+        # fails (typo, transient API error, dry-run with stub id). Empty
+        # meta degrades the SUT block to nulls; the trials are still valid.
+        print(f"WARN: agent retrieve failed; SUT meta will be empty: {e}", file=sys.stderr)
+        return {}
     return res if isinstance(res, dict) else {}
 
 
@@ -350,13 +391,13 @@ def emit_manifest(out_dir: Path, case_dir: Path, agent_id: str, env_id: str,
                   resolved_files: dict[str, str], paraphrases: list[str],
                   trials_per_paraphrase: int, runner_path: Path, score_path: Path,
                   trial_summaries: list[dict], started: str, ended: str,
-                  timeout_seconds: int):
+                  timeout_seconds: int, role: str = "ingestion"):
     expected_path = case_dir / "expected.json"
     spec_path = case_dir / "spec.md"
     expected = json.loads(expected_path.read_text())
     agent_meta = fetch_agent_meta(agent_id) if agent_id else {}
 
-    kickoff_shas = {p: sha256_path(case_dir / f"kickoff_{p}.json") for p in paraphrases}
+    kickoff_shas = {p: sha256_path(kickoff_path(case_dir, p, role)) for p in paraphrases}
 
     manifest = {
         "schema_version": 1,
@@ -437,22 +478,35 @@ def main():
         print(f"ERROR: case dir not found: {case_dir}", file=sys.stderr)
         return 2
 
-    file_overrides = parse_file_overrides(args.file)
-    resources, resolved_files = build_resources(case_dir, file_overrides)
+    role = detect_role(args.case)
 
-    available_paraphrases = list_paraphrases(case_dir, "all")
+    file_overrides = parse_file_overrides(args.file)
+    if role == "resolver":
+        # Resolver kickoffs carry the email/registry inline — no file uploads.
+        if file_overrides:
+            print(f"WARN: --file overrides ignored for resolver case ({list(file_overrides)})", file=sys.stderr)
+        resources: list[dict] = []
+        resolved_files: dict[str, str] = {}
+        container_paths: list[str] = []
+    else:
+        resources, resolved_files = build_resources(case_dir, file_overrides)
+        resources_spec = json.loads((case_dir / "resources.json").read_text())
+        container_paths = resources_spec.get("container_paths_to_capture", [])
+
+    available_paraphrases = list_paraphrases(case_dir, "all", role)
     if args.paraphrases is None:
         paraphrases = available_paraphrases[:1]
-        print(f"No --paraphrases given; running smoke (first paraphrase only): {paraphrases}")
+        if role != "resolver":
+            print(f"No --paraphrases given; running smoke (first paraphrase only): {paraphrases}")
     else:
-        paraphrases = list_paraphrases(case_dir, args.paraphrases)
+        paraphrases = list_paraphrases(case_dir, args.paraphrases, role)
 
     started = now_z()
     case_slug = args.case.replace("/", "-")
     out_dir = Path(args.out_dir) if args.out_dir else (repo_root / "runs" / f"{started}-{case_slug}-{args.agent_id}")
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"Case: {args.case}")
+    print(f"Case: {args.case} (role={role})")
     print(f"Out:  {out_dir}")
     print(f"SUT:  agent={args.agent_id} env={args.env_id}")
     print(f"Files: {resolved_files}")
@@ -469,13 +523,14 @@ def main():
             summary = run_trial(
                 case_dir, paraphrase, trial_idx, args.agent_id, args.env_id,
                 resources, out_dir, args.timeout_seconds,
-                json.loads((case_dir / "resources.json").read_text()).get("container_paths_to_capture", []),
-                args.dry_run,
+                container_paths,
+                args.dry_run, role,
             )
             trial_summaries.append(summary)
             ok = summary.get("envelope_captured") and not summary.get("error")
+            tail = "" if role == "resolver" else f" manifest={summary['manifest_captured']}"
             print(f"  {'OK' if ok else 'FAIL'}: session={summary.get('session_id')!r} "
-                  f"envelope={summary['envelope_captured']} manifest={summary['manifest_captured']} "
+                  f"envelope={summary['envelope_captured']}{tail} "
                   f"error={summary.get('error')}")
 
     ended = now_z()
@@ -483,7 +538,7 @@ def main():
         out_dir, case_dir, args.agent_id, args.env_id, resolved_files,
         paraphrases, args.trials_per_paraphrase,
         repo_root / "runner.py", repo_root / "score.py",
-        trial_summaries, started, ended, args.timeout_seconds,
+        trial_summaries, started, ended, args.timeout_seconds, role,
     )
 
     print(f"\nManifest written to {out_dir / 'manifest.json'}")

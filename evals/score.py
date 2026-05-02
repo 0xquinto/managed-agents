@@ -167,15 +167,78 @@ def _check_assertion(name: str, kind: str, val, a, manifest, col: str):
         ok = not extras
         return _result("PASS" if ok else "FAIL", name,
                        f"subset of {of_field}={sorted(parent_set)} extras={sorted(extras)}", col)
+    if kind == "is_subset_of":
+        # Plain subset: actual list values must all appear in the expected
+        # `values` list. Distinct from `is_subset_of_field` which compares
+        # against a sibling field. Spec § 7.4 v3 vocab.
+        if not isinstance(val, list):
+            return _result("FAIL", name, f"not a list: {val!r}", col)
+        allowed = set(a["values"])
+        actual = set(val)
+        extras = actual - allowed
+        ok = not extras
+        return _result("PASS" if ok else "FAIL", name,
+                       f"subset of {sorted(allowed)} extras={sorted(extras)}", col)
     if kind == "must_not_contain":
-        if not isinstance(val, str):
-            return _result("FAIL", name, f"not a string: {val!r}", col)
+        # Accepts both strings (substring forbidden) and lists (element forbidden).
+        # Same shape: `values` is the forbidden set. Spec § 7.4 v3 vocab.
         forbidden = a["values"]
-        hit = next((f for f in forbidden if f in val), None)
+        if isinstance(val, str):
+            hit = next((f for f in forbidden if f in val), None)
+        elif isinstance(val, list):
+            forbidden_set = set(forbidden)
+            hit = next((v for v in val if v in forbidden_set), None)
+        else:
+            return _result("FAIL", name, f"not a string or list: {val!r}", col)
         ok = hit is None
         return _result("PASS" if ok else "FAIL", name,
                        f"forbidden={forbidden!r} hit={hit!r}", col)
+    if kind == "language":
+        # Deterministic language detection. v1 ships with `langdetect` (seed-pinned)
+        # — see `_detect_language`. The expected language is an ISO 639-1 code
+        # (es / en / pt / ...). Spec § 7.4 v3 vocab.
+        if not isinstance(val, str) or len(val.strip()) < 20:
+            return _result("FAIL", name,
+                           f"need ≥20 chars of text to detect, got len={len(val) if isinstance(val, str) else 0}",
+                           col)
+        try:
+            detected = _detect_language(val)
+        except _LanguageDetectUnavailable as exc:
+            return _result("ERROR", name, str(exc), col)
+        ok = detected == a["expected"]
+        return _result("PASS" if ok else "FAIL", name,
+                       f"expected={a['expected']!r} detected={detected!r}", col)
     return _result("ERROR", name, f"unsupported type {kind!r}", col)
+
+
+# ---------------------------------------------------------------------------
+# Deterministic language detection
+# ---------------------------------------------------------------------------
+
+
+class _LanguageDetectUnavailable(RuntimeError):
+    """Raised when `langdetect` isn't installed — the assertion can't run."""
+
+
+def _detect_language(text: str) -> str:
+    """Detect ISO 639-1 language code via langdetect, deterministically.
+
+    `langdetect` is non-deterministic by default (uses a stochastic Naive
+    Bayes), so we seed `DetectorFactory.seed = 0` once at import time. The
+    same input then always produces the same label across CI runs and dev
+    machines — required for paired-McNemar A/Bs to be reproducible per
+    playbook § 9.
+    """
+    try:
+        from langdetect import DetectorFactory, detect
+    except ImportError as exc:  # pragma: no cover — env-dep
+        raise _LanguageDetectUnavailable(
+            "langdetect not installed; add it to evals/requirements.txt or "
+            "the poller's [dev] extra"
+        ) from exc
+
+    DetectorFactory.seed = 0
+    return detect(text)
 
 def score_envelope(expected, envelope):
     out = []
