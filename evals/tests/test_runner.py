@@ -123,5 +123,7 @@ def test_resolver_kickoff_is_serializable_json():
     runner_file = runner.__file__
     assert runner_file is not None  # for pyright — script modules have __file__
     evals_dir = Path(runner_file).resolve().parent
-    for kickoff in (evals_dir / "resolver").glob("*/kickoff.json"):
+    kickoffs = list((evals_dir / "resolver").glob("*/kickoff.json"))
+    assert kickoffs, "expected ≥1 resolver kickoff under evals/resolver/*/kickoff.json"
+    for kickoff in kickoffs:
         json.loads(kickoff.read_text())  # raises if malformed

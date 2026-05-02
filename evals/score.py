@@ -100,7 +100,8 @@ def _check_assertion(name: str, kind: str, val, a, manifest, col: str):
 
     Returns a single _result row. Supports the v3 assertion vocabulary:
       exact, range, contains_one_of, regex, min_length, is_object, is_string,
-      is_superset_of, is_subset_of_field, must_not_contain.
+      is_superset_of, is_subset_of_field, is_subset_of, must_not_contain,
+      language.
     """
     import re
     if kind == "exact":
@@ -180,14 +181,16 @@ def _check_assertion(name: str, kind: str, val, a, manifest, col: str):
         return _result("PASS" if ok else "FAIL", name,
                        f"subset of {sorted(allowed)} extras={sorted(extras)}", col)
     if kind == "must_not_contain":
-        # Accepts both strings (substring forbidden) and lists (element forbidden).
-        # Same shape: `values` is the forbidden set. Spec § 7.4 v3 vocab.
+        # Two semantics, deliberately asymmetric — `values` is the forbidden set:
+        #   - string val → substring check (forbidden phrases in prose, e.g. "ignore previous")
+        #   - list val   → element-equality check (forbidden tags/ids, e.g. {"PII"} in flags)
+        # If you want substring semantics over a list, join it first or split your
+        # forbidden tokens. Spec § 7.4 v3 vocab.
         forbidden = a["values"]
         if isinstance(val, str):
             hit = next((f for f in forbidden if f in val), None)
         elif isinstance(val, list):
-            forbidden_set = set(forbidden)
-            hit = next((v for v in val if v in forbidden_set), None)
+            hit = next((v for v in val if v in forbidden), None)
         else:
             return _result("FAIL", name, f"not a string or list: {val!r}", col)
         ok = hit is None
@@ -197,10 +200,17 @@ def _check_assertion(name: str, kind: str, val, a, manifest, col: str):
         # Deterministic language detection. v1 ships with `langdetect` (seed-pinned)
         # — see `_detect_language`. The expected language is an ISO 639-1 code
         # (es / en / pt / ...). Spec § 7.4 v3 vocab.
-        if not isinstance(val, str) or len(val.strip()) < 20:
-            return _result("FAIL", name,
-                           f"need ≥20 chars of text to detect, got len={len(val) if isinstance(val, str) else 0}",
-                           col)
+        if not isinstance(val, str):
+            return _result("FAIL", name, f"not a string: {val!r}", col)
+        if len(val.strip()) < 20:
+            # Short text is an instrument confounder, not an agent miss — emit
+            # SKIP on the environment column so it's excluded from the agent's
+            # process pass-rate per playbook § 9.
+            return _result(
+                "SKIP", name,
+                f"too short to classify reliably (len={len(val)} < 20 chars)",
+                "environment",
+            )
         try:
             detected = _detect_language(val)
         except _LanguageDetectUnavailable as exc:

@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import importlib
 
+import pytest
+
 score = importlib.import_module("score")
 
 
@@ -136,6 +138,28 @@ class TestMustNotContainTypeErrors:
         assert status == "FAIL"
         assert "not a string or list" in detail
 
+    def test_list_of_dicts_does_not_crash(self):
+        # Lock in: list-form uses element equality, so unhashable dicts
+        # silently miss any forbidden string token. This is by-design
+        # asymmetry vs the string-substring path; documented at the
+        # `must_not_contain` branch in score.py.
+        status, _, detail, _ = _check(
+            "must_not_contain",
+            [{"flag": "PII"}, {"flag": "ok"}],
+            {"values": ["PII"]},
+        )
+        assert status == "PASS", detail
+
+    def test_list_substring_token_does_not_match_inside_element(self):
+        # Same asymmetry: 'TBD' as a forbidden token is not found inside
+        # the list element 'value: TBD' because list path is exact-equality.
+        status, *_ = _check(
+            "must_not_contain",
+            ["value: TBD", "ok"],
+            {"values": ["TBD"]},
+        )
+        assert status == "PASS"
+
 
 # ---------------------------------------------------------------------------
 # language — deterministic detect via langdetect
@@ -143,8 +167,13 @@ class TestMustNotContainTypeErrors:
 
 
 class TestLanguageDetection:
+    # Tests that hit the real langdetect backend skip when the dep isn't
+    # installed (declared in evals/requirements.txt). The short-text /
+    # not-a-string / unavailable-backend paths short-circuit before calling
+    # the detector and run unconditionally.
 
     def test_passes_for_spanish_text(self):
+        pytest.importorskip("langdetect")
         status, _, detail, _ = _check(
             "language",
             "Estimado cliente, le confirmamos la recepción de su análisis financiero correspondiente al primer trimestre.",
@@ -153,6 +182,7 @@ class TestLanguageDetection:
         assert status == "PASS", detail
 
     def test_passes_for_english_text(self):
+        pytest.importorskip("langdetect")
         status, *_ = _check(
             "language",
             "Dear client, we confirm receipt of your first-quarter financial analysis and will respond shortly.",
@@ -161,6 +191,7 @@ class TestLanguageDetection:
         assert status == "PASS"
 
     def test_fails_when_detected_language_does_not_match(self):
+        pytest.importorskip("langdetect")
         status, _, detail, _ = _check(
             "language",
             "Estimado cliente, le confirmamos la recepción de su análisis financiero correspondiente al primer trimestre.",
@@ -169,14 +200,31 @@ class TestLanguageDetection:
         assert status == "FAIL"
         assert "expected='en'" in detail and "detected='es'" in detail
 
-    def test_fails_when_text_too_short_to_classify(self):
-        status, _, detail, _ = _check(
+    def test_skips_when_text_too_short_to_classify(self):
+        # Short text is an instrument confounder, not an agent miss — must
+        # SKIP on environment column so it doesn't charge the agent's
+        # process pass-rate. Per playbook § 9.
+        status, _, detail, col = _check(
             "language",
             "Hola.",
             {"expected": "es"},
         )
-        assert status == "FAIL"
-        assert "≥20 chars" in detail
+        assert status == "SKIP"
+        assert col == "environment"
+        assert "too short" in detail
+
+    def test_short_text_skip_does_not_call_detector(self, monkeypatch):
+        # Ensure the SKIP branch short-circuits before invoking langdetect —
+        # otherwise the SKIP path is fragile to backend availability.
+        called = {"n": 0}
+        def _spy(text):
+            del text  # signature-only — short-text path must not invoke this
+            called["n"] += 1
+            return "es"
+        monkeypatch.setattr(score, "_detect_language", _spy)
+        status, *_ = _check("language", "Hola.", {"expected": "es"})
+        assert status == "SKIP"
+        assert called["n"] == 0
 
     def test_fails_when_value_is_not_a_string(self):
         status, _, detail, _ = _check(
@@ -185,9 +233,10 @@ class TestLanguageDetection:
             {"expected": "es"},
         )
         assert status == "FAIL"
-        assert "≥20 chars" in detail
+        assert "not a string" in detail
 
     def test_detection_is_deterministic_across_calls(self):
+        pytest.importorskip("langdetect")
         text = "Estimado cliente, le confirmamos la recepción de su análisis financiero del primer trimestre."
         first = score._detect_language(text)
         repeats = {score._detect_language(text) for _ in range(8)}
@@ -197,8 +246,8 @@ class TestLanguageDetection:
         )
 
     def test_unavailable_backend_returns_error_not_pass(self, monkeypatch):
-        def _raise(_text: str) -> str:
-            del _text
+        def _raise(text: str) -> str:
+            del text  # signature-only — we always raise before reading
             raise score._LanguageDetectUnavailable("langdetect not installed")
         monkeypatch.setattr(score, "_detect_language", _raise)
         status, _, detail, _ = _check(
