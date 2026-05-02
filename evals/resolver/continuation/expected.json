@@ -1,0 +1,16 @@
+{
+  "case_id": "resolver/continuation",
+  "schema_version": 1,
+  "slice_version": "0.1.0",
+  "envelope": [
+    { "field": "decision", "type": "exact", "value": "continuation", "column": "process" },
+    { "field": "contract_id", "type": "exact", "value": "INS-2026-007", "column": "process" },
+    { "field": "confidence", "type": "range", "min": 0.7, "max": 1.0, "column": "outcome" },
+    { "field": "superseded_by_prior", "type": "exact", "value": false, "column": "process" },
+    { "field": "triage_payload", "type": "exact", "value": null, "column": "process" },
+    { "field": "new_contract_proposal", "type": "exact", "value": null, "column": "process" }
+  ],
+  "envelope_format": [
+    { "type": "no_markdown_fences", "column": "process" }
+  ]
+}

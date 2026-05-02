@@ -1,0 +1,7 @@
+{
+  "type": "user",
+  "message": {
+    "role": "user",
+    "content": "{\"email\":{\"from\":\"ines@finanzas.com.ar\",\"to\":[\"contracts@insignia.com\"],\"cc\":[],\"subject\":\"Análisis financiero Q1\",\"conversationId\":\"AAQk-conv-unknown\",\"messageId\":\"AAMk-msg-unknown-1\",\"body_text\":\"Buen día, adjunto los EE.FF. del Q1.\",\"received_at\":\"2026-05-10T09:00:00Z\"},\"attachments\":[{\"message_attachment_id\":\"att-7\",\"filename\":\"EF Q1 2025.pdf\",\"sha256\":\"deadbeef0000000000000000000000000000000000000000000000000000ffff\",\"size\":900000,\"content_type\":\"application/pdf\"}],\"registry\":[{\"contract_id\":\"INS-2026-007\",\"client_name\":\"Financiera Tafi\",\"sender_addresses\":[\"ana@tafi.com.ar\",\"jorge@tafi.com.ar\"],\"subject_tag\":null,\"onedrive_path\":\"/Contracts/Tafi/\",\"teams_channel_id\":\"19:abc@thread.tacv2\",\"status\":\"open\",\"opened_at\":\"2026-04-12T09:00:00Z\"},{\"contract_id\":\"INS-2026-008\",\"client_name\":\"Tucumán Capital\",\"sender_addresses\":[\"laura@tucumancap.com.ar\"],\"subject_tag\":null,\"onedrive_path\":\"/Contracts/Tucuman/\",\"teams_channel_id\":\"19:def@thread.tacv2\",\"status\":\"open\",\"opened_at\":\"2026-04-20T10:00:00Z\"}],\"attachment_hashes_seen_for_candidate\":{\"INS-2026-007\":[],\"INS-2026-008\":[]}}"
+  }
+}

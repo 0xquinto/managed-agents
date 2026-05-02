@@ -1,0 +1,43 @@
+[project]
+name = "insignia-poller"
+version = "0.1.0"
+description = "Insignia ingestion v3 email-driven poller. See docs/superpowers/specs/2026-05-01-ingestion-v3-email-poller-design.md."
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "pydantic[email]>=2.7,<3",
+    "msgraph-sdk>=1.6,<2",
+    "azure-identity>=1.17,<2",
+    "anthropic>=0.30,<1",
+    "structlog>=24.1,<25",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.2,<9",
+    "pytest-asyncio>=0.23,<1",
+    "pytest-mock>=3.12,<4",
+    "ruff>=0.5,<1",
+    "mypy>=1.10,<2",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+warn_return_any = true
+warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+module = ["msgraph.*", "azure.identity.*"]
+ignore_missing_imports = true
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["poller*"]

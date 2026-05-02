@@ -5,3 +5,11 @@ __pycache__/
 *.pyc
 evals/runs/
 lint/proposed/
+
+# Poller (Python venv + caches)
+poller/.venv/
+poller/.pytest_cache/
+poller/.mypy_cache/
+poller/.ruff_cache/
+poller/**/__pycache__/
+poller/*.egg-info/

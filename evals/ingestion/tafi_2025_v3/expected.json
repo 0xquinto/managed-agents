@@ -1,0 +1,93 @@
+{
+  "case_id": "ingestion/tafi_2025_v3",
+  "schema_version": 3,
+  "slice_version": "0.1.0",
+  "description": "v3-specific assertions on the Tafi 2025 case with the dictamen attachment pruned. Validates ManifestV3.client_email_draft + missing_fields_referenced subset rule per spec § 4.5 + § 6.3.",
+  "based_on": "ingestion/tafi_2025",
+  "envelope": [
+    {
+      "field": "status",
+      "type": "exact",
+      "value": "blocked",
+      "column": "process",
+      "rationale": "with the dictamen pruned, the agent should signal blocked, not ok"
+    },
+    {
+      "field": "missing_fields",
+      "type": "is_superset_of",
+      "values": ["dictamen"],
+      "column": "process",
+      "rationale": "missing_fields must list at least 'dictamen'; agent may add others (e.g., 'memoria')"
+    }
+  ],
+  "envelope_format": [
+    {
+      "type": "no_markdown_fences",
+      "column": "process"
+    },
+    {
+      "type": "no_surrounding_prose",
+      "column": "process"
+    }
+  ],
+  "outputs": [
+    {
+      "type": "file_exists_and_nonempty",
+      "path": "/mnt/session/out/tafi_2025_v3/manifest.json",
+      "format": "json",
+      "column": "outcome"
+    }
+  ],
+  "manifest": {
+    "required_keys": [
+      "entity",
+      "periods",
+      "pdf_extraction",
+      "csv_extraction",
+      "quality_flags",
+      "reconciliations",
+      "missing_fields",
+      "outputs",
+      "client_email_draft"
+    ],
+    "field_assertions": [
+      {
+        "field": "client_email_draft",
+        "type": "is_object",
+        "column": "process",
+        "rationale": "v3 contract: a blocked-status manifest MUST populate the draft when missing_fields is non-empty"
+      },
+      {
+        "field": "client_email_draft.language",
+        "type": "exact",
+        "value": "es",
+        "column": "outcome",
+        "rationale": "must match email_context.language; spec § 6.3 lint"
+      },
+      {
+        "field": "client_email_draft.body",
+        "type": "min_length",
+        "value": 50,
+        "column": "outcome",
+        "rationale": "spec § 6.3: body < 50 chars is a hard reject"
+      },
+      {
+        "field": "client_email_draft.body",
+        "type": "must_not_contain",
+        "values": ["TBD", "TODO", "[…]"],
+        "column": "outcome",
+        "rationale": "spec § 6.3: any forbidden substring is a hard reject"
+      },
+      {
+        "field": "client_email_draft.missing_fields_referenced",
+        "type": "is_subset_of_field",
+        "of_field": "missing_fields",
+        "column": "process",
+        "rationale": "spec § 4.5 + ManifestV3 model_validator: referenced ⊆ envelope's missing_fields"
+      }
+    ]
+  },
+  "reconciliations": {
+    "_note": "v3 slice does not check reconciliations — pruning a doc from a real case may invalidate balance identities. Inherits ok-path checks from parent slice when running v2-shaped trials."
+  }
+}

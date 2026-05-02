@@ -1,0 +1,48 @@
+{
+  "case_id": "resolver/new_contract",
+  "schema_version": 1,
+  "slice_version": "0.1.0",
+  "envelope": [
+    {
+      "field": "decision",
+      "type": "exact",
+      "value": "new_contract",
+      "column": "process",
+      "rationale": "empty registry + unseen domain is the canonical new_contract signal"
+    },
+    {
+      "field": "contract_id",
+      "type": "exact",
+      "value": null,
+      "column": "process",
+      "rationale": "no contract exists yet; the proposal carries the suggestion"
+    },
+    {
+      "field": "confidence",
+      "type": "range",
+      "min": 0.5,
+      "max": 1.0,
+      "column": "outcome"
+    },
+    {
+      "field": "new_contract_proposal",
+      "type": "is_object",
+      "column": "process"
+    },
+    {
+      "field": "new_contract_proposal.sender_domain",
+      "type": "exact",
+      "value": "tafi.com.ar",
+      "column": "outcome"
+    },
+    {
+      "field": "new_contract_proposal.suggested_contract_id",
+      "type": "regex",
+      "value": "^INS-\\d{4}-\\d{3}$",
+      "column": "process"
+    }
+  ],
+  "envelope_format": [
+    { "type": "no_markdown_fences", "column": "process" }
+  ]
+}

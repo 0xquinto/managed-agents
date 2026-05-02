@@ -1,0 +1,7 @@
+{
+  "type": "user",
+  "message": {
+    "role": "user",
+    "content": "{\"email\":{\"from\":\"ana@tafi.com.ar\",\"to\":[\"contracts@insignia.com\"],\"cc\":[],\"subject\":\"Re: Análisis financiero Q1 — agrego dictamen\",\"conversationId\":\"AAQk-conv-tafi-1\",\"messageId\":\"AAMk-msg-tafi-2\",\"body_text\":\"Acá va el dictamen del auditor que faltaba.\",\"received_at\":\"2026-05-08T10:00:00Z\"},\"attachments\":[{\"message_attachment_id\":\"att-2\",\"filename\":\"Dictamen Tafi 2025.pdf\",\"sha256\":\"a2000000000000000000000000000000000000000000000000000000000000b3\",\"size\":820000,\"content_type\":\"application/pdf\"}],\"registry\":[{\"contract_id\":\"INS-2026-007\",\"client_name\":\"Financiera Tafi\",\"sender_addresses\":[\"ana@tafi.com.ar\",\"jorge@tafi.com.ar\"],\"subject_tag\":null,\"onedrive_path\":\"/Contracts/Tafi/\",\"teams_channel_id\":\"19:abc@thread.tacv2\",\"status\":\"open\",\"opened_at\":\"2026-04-12T09:00:00Z\"}],\"attachment_hashes_seen_for_candidate\":{\"INS-2026-007\":[\"9f000000000000000000000000000000000000000000000000000000000000a1\"]}}"
+  }
+}
