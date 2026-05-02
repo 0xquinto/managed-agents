@@ -93,6 +93,90 @@ def _result(status, name, detail, column):
     return (status, name, detail, column)
 
 
+
+
+def _check_assertion(name: str, kind: str, val, a, manifest, col: str):
+    """Generic assertion dispatcher used by both envelope + manifest scorers.
+
+    Returns a single _result row. Supports the v3 assertion vocabulary:
+      exact, range, contains_one_of, regex, min_length, is_object, is_string,
+      is_superset_of, is_subset_of_field, must_not_contain.
+    """
+    import re
+    if kind == "exact":
+        ok = val == a["value"]
+        return _result("PASS" if ok else "FAIL", name,
+                       f"expected={a['value']!r} actual={val!r}", col)
+    if kind == "range":
+        if val is None:
+            return _result("FAIL", name, "value is null", col)
+        try:
+            num = float(val)
+            ok = a.get("min", float("-inf")) <= num <= a.get("max", float("inf"))
+            return _result("PASS" if ok else "FAIL", name,
+                           f"in [{a.get('min')}, {a.get('max')}] actual={val}", col)
+        except (TypeError, ValueError):
+            return _result("FAIL", name, f"not numeric: {val!r}", col)
+    if kind == "contains_one_of":
+        sval = str(val).lower()
+        ok = any(opt.lower() in sval for opt in a["values"])
+        return _result("PASS" if ok else "FAIL", name,
+                       f"one of {a['values']!r} actual={val!r}", col)
+    if kind == "regex":
+        if not isinstance(val, str):
+            return _result("FAIL", name, f"not a string: {val!r}", col)
+        ok = bool(re.match(a["value"], val))
+        return _result("PASS" if ok else "FAIL", name,
+                       f"regex {a['value']!r} actual={val!r}", col)
+    if kind == "min_length":
+        try:
+            n = len(val)
+        except TypeError:
+            return _result("FAIL", name, f"not lengthy: {val!r}", col)
+        ok = n >= a["value"]
+        return _result("PASS" if ok else "FAIL", name,
+                       f"len ≥ {a['value']} actual={n}", col)
+    if kind == "is_object":
+        ok = isinstance(val, dict)
+        return _result("PASS" if ok else "FAIL", name,
+                       f"is dict={ok} actual_type={type(val).__name__}", col)
+    if kind == "is_string":
+        ok = isinstance(val, str) and len(val) > 0
+        return _result("PASS" if ok else "FAIL", name,
+                       f"non-empty str={ok} actual={val!r}", col)
+    if kind == "is_superset_of":
+        if not isinstance(val, list):
+            return _result("FAIL", name, f"not a list: {val!r}", col)
+        required = set(a["values"])
+        actual = set(val)
+        missing = required - actual
+        ok = not missing
+        return _result("PASS" if ok else "FAIL", name,
+                       f"superset of {sorted(required)} missing={sorted(missing)}", col)
+    if kind == "is_subset_of_field":
+        if not isinstance(val, list):
+            return _result("FAIL", name, f"not a list: {val!r}", col)
+        of_field = a["of_field"]
+        found, parent_val = get_field(manifest, of_field)
+        if not found or not isinstance(parent_val, list):
+            return _result("FAIL", name,
+                           f"sibling field {of_field!r} missing or not a list", col)
+        actual = set(val)
+        parent_set = set(parent_val)
+        extras = actual - parent_set
+        ok = not extras
+        return _result("PASS" if ok else "FAIL", name,
+                       f"subset of {of_field}={sorted(parent_set)} extras={sorted(extras)}", col)
+    if kind == "must_not_contain":
+        if not isinstance(val, str):
+            return _result("FAIL", name, f"not a string: {val!r}", col)
+        forbidden = a["values"]
+        hit = next((f for f in forbidden if f in val), None)
+        ok = hit is None
+        return _result("PASS" if ok else "FAIL", name,
+                       f"forbidden={forbidden!r} hit={hit!r}", col)
+    return _result("ERROR", name, f"unsupported type {kind!r}", col)
+
 def score_envelope(expected, envelope):
     out = []
     for a in expected.get("envelope", []):
@@ -102,12 +186,7 @@ def score_envelope(expected, envelope):
         if not found:
             out.append(_result("FAIL", f"envelope.{field}", "missing field", col))
             continue
-        if kind == "exact":
-            ok = val == a["value"]
-            out.append(_result("PASS" if ok else "FAIL", f"envelope.{field}",
-                               f"expected={a['value']!r} actual={val!r}", col))
-        else:
-            out.append(_result("ERROR", f"envelope.{field}", f"unsupported type {kind!r}", col))
+        out.append(_check_assertion(f"envelope.{field}", kind, val, a, envelope, col))
     return out
 
 
@@ -216,28 +295,7 @@ def score_manifest(expected, manifest):
         if not found:
             out.append(_result("FAIL", f"manifest.{field}", "missing field", col))
             continue
-        if kind == "exact":
-            ok = val == a["value"]
-            out.append(_result("PASS" if ok else "FAIL", f"manifest.{field}",
-                               f"expected={a['value']!r} actual={val!r}", col))
-        elif kind == "range":
-            if val is None:
-                out.append(_result("FAIL", f"manifest.{field}", "value is null", col))
-                continue
-            try:
-                num = float(val)  # type: ignore[arg-type]
-                ok = a.get("min", float("-inf")) <= num <= a.get("max", float("inf"))
-                out.append(_result("PASS" if ok else "FAIL", f"manifest.{field}",
-                                   f"in [{a.get('min')}, {a.get('max')}] actual={val}", col))
-            except (TypeError, ValueError):
-                out.append(_result("FAIL", f"manifest.{field}", f"not numeric: {val!r}", col))
-        elif kind == "contains_one_of":
-            sval = str(val).lower()
-            ok = any(opt.lower() in sval for opt in a["values"])
-            out.append(_result("PASS" if ok else "FAIL", f"manifest.{field}",
-                               f"one of {a['values']!r} actual={val!r}", col))
-        else:
-            out.append(_result("ERROR", f"manifest.{field}", f"unsupported type {kind!r}", col))
+        out.append(_check_assertion(f"manifest.{field}", kind, val, a, manifest, col))
     return out
 
 

@@ -1,0 +1,26 @@
+{
+  "case_id": "resolver/triage",
+  "schema_version": 1,
+  "slice_version": "0.1.0",
+  "envelope": [
+    { "field": "decision", "type": "exact", "value": "triage", "column": "process" },
+    { "field": "contract_id", "type": "exact", "value": null, "column": "process" },
+    { "field": "confidence", "type": "range", "min": 0.0, "max": 0.7, "column": "outcome" },
+    { "field": "triage_payload", "type": "is_object", "column": "process" },
+    {
+      "field": "triage_payload.question",
+      "type": "is_string",
+      "column": "outcome"
+    },
+    {
+      "field": "triage_payload.candidates",
+      "type": "min_length",
+      "value": 1,
+      "column": "outcome",
+      "rationale": "must list at least one candidate row from the registry"
+    }
+  ],
+  "envelope_format": [
+    { "type": "no_markdown_fences", "column": "process" }
+  ]
+}

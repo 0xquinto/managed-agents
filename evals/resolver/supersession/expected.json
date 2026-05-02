@@ -1,0 +1,19 @@
+{
+  "case_id": "resolver/supersession",
+  "schema_version": 1,
+  "slice_version": "0.1.0",
+  "envelope": [
+    { "field": "decision", "type": "exact", "value": "continuation", "column": "process" },
+    { "field": "contract_id", "type": "exact", "value": "INS-2026-007", "column": "process" },
+    { "field": "superseded_by_prior", "type": "exact", "value": true, "column": "process" },
+    {
+      "field": "superseded_reason",
+      "type": "is_string",
+      "column": "outcome",
+      "rationale": "rationale must be present and non-empty when superseded_by_prior=true"
+    }
+  ],
+  "envelope_format": [
+    { "type": "no_markdown_fences", "column": "process" }
+  ]
+}

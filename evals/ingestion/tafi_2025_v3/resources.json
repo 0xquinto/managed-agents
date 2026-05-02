@@ -1,0 +1,22 @@
+{
+  "_comment": "Same Tafi 2025 case as the parent slice but the dictamen attachment is omitted to provoke status=blocked + a Spanish client_email_draft. The PDF + CSV files are inherited.",
+  "files": [
+    {
+      "file_id_param": "tafi_pdf",
+      "mount_path": "input/tafi_2025_v3/Borrador de EF 2025 - Financiera Tafi - MICI.pdf",
+      "default_file_id": "file_011CaaVTNcQEKbg4Dt1vCcCF",
+      "description": "Tafi 2025 financial statement PDF (captured from POC; identical to parent slice)"
+    },
+    {
+      "file_id_param": "tafi_csv",
+      "mount_path": "input/tafi_2025_v3/Cartera Total TAFI.csv",
+      "default_file_id": "file_011CaaVTupcqW1ZuPvi63z1M",
+      "description": "Tafi cumulative loan portfolio CSV (captured from POC; identical to parent slice)"
+    }
+  ],
+  "container_paths_to_capture": [
+    "/mnt/session/out/tafi_2025_v3/manifest.json"
+  ],
+  "_omitted_intentionally": "The dictamen del auditor PDF is NOT mounted. The agent must detect its absence, populate envelope.missing_fields=['dictamen'] (or superset), and draft a Spanish follow-up requesting it.",
+  "_note_on_mount_paths": "Per sessions-expert.md: type=file mount_paths auto-prefix with /mnt/session/uploads/. So the kickoff JSON references /mnt/session/uploads/input/tafi_2025_v3/..."
+}
