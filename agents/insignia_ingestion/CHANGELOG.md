@@ -2,6 +2,42 @@
 
 The deployed agent's `system` field is the source of truth on the platform; this directory persists each version's prompt for diffing and provenance.
 
+## v3 (2026-05-02)
+
+Surgical diff vs. v2 for the email-driven POC. Spec: `docs/superpowers/specs/2026-05-01-ingestion-v3-email-poller-design.md` § 4.
+
+### Added
+
+| Add | What |
+|---|---|
+| `client_name`, `email_context`, `memory_paths` in **Inputs** | Kickoff schema bumped per spec § 4.4 (`IngestionKickoff`). Email metadata trimmed to ≤500-char body excerpt; `language` ∈ `{es, en, pt}`. |
+| New step 5: **Draft a follow-up email** when `missing_fields` is non-empty | Reads 1–3 examples from `memory_paths.tone_examples_dir` to match Insignia's voice. Writes in `email_context.language` (default Spanish). Threads on `email_context.messageId`. References specific missing items by name. The agent does NOT send — orchestrator does after human approval. |
+| `client_email_draft` and `triage_request` keys in **manifest schema** | Per spec § 4.5. `triage_request` always `null` here (triage is upstream); both are present so the orchestrator can switch on the union of resolver + ingestion outputs. |
+| Memory store mounted at `/mnt/memory/` | Read-only access to `priors/<contract_id>.json` and `tone_examples/`. Per spec § 5.2 access matrix: agents never write to memory. |
+
+### Removed
+
+- The contract-id-derivation paragraph from v2's "Inputs you receive". Resolved upstream by the resolver agent now.
+
+### Preserved verbatim from v2
+
+For the v2↔v3 paired-McNemar A/B (ingestion axis only), v2's substance is kept untouched:
+
+- The `/mnt/session/uploads/input/<contract_id>/` mount-path note (R001).
+- The "do NOT also copy outputs to `/mnt/session/outputs/`" rule (R003).
+- The `/tmp/<contract_id>/` persistence guidance and "combine related operations into one bash call" rule (R004).
+- The "no surrounding prose, no markdown code fences" envelope discipline (R005).
+- The pdf/xlsx/docx skill fallback chain.
+- The cleaner-not-modeler identity, extended in v3 to "cleaner who can also draft the missing-data follow-up — not a modeler, not a router."
+
+### Scope discipline (per spec § 4.2)
+
+v3 explicitly does NOT contain triage logic. The kickoff always carries a resolved `contract_id`; if it doesn't, the prompt instructs the agent to emit `status: "failed"` and exit. The poller's resolver step is responsible for everything pre-resolution.
+
+### Eval
+
+Eval slice: `evals/ingestion/tafi_2025_v3/` (extends `evals/ingestion/tafi_2025` with v3-specific assertions on `client_email_draft.*` and the manifest's new keys).
+
 ## v2 (2026-04-30)
 
 Four targeted fixes from the 2026-04-30T18-40-29Z-poc run-log review (`runs/latest/summary.md` + the L0–L10 stack analysis in session 9ec4e973):

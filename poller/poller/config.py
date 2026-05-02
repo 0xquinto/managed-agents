@@ -14,6 +14,7 @@ _REQUIRED_KEYS = (
     "INSIGNIA_RESOLVER_AGENT_ID",
     "INSIGNIA_INGESTION_V3_AGENT_ID",
     "INSIGNIA_MEMORY_STORE_ID",
+    "INSIGNIA_ENVIRONMENT_ID",
 )
 
 
@@ -36,6 +37,7 @@ class Settings:
     insignia_resolver_agent_id: str
     insignia_ingestion_v3_agent_id: str
     insignia_memory_store_id: str
+    insignia_environment_id: str
     poll_interval_seconds: int = 300  # spec § 2.1 default
 
     @classmethod
@@ -53,5 +55,6 @@ class Settings:
             insignia_resolver_agent_id=os.environ["INSIGNIA_RESOLVER_AGENT_ID"],
             insignia_ingestion_v3_agent_id=os.environ["INSIGNIA_INGESTION_V3_AGENT_ID"],
             insignia_memory_store_id=os.environ["INSIGNIA_MEMORY_STORE_ID"],
+            insignia_environment_id=os.environ["INSIGNIA_ENVIRONMENT_ID"],
             poll_interval_seconds=int(os.environ.get("POLL_INTERVAL_SECONDS", "300")),
         )

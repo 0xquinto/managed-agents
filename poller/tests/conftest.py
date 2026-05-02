@@ -21,6 +21,7 @@ def fake_env() -> Iterator[dict[str, str]]:
         "INSIGNIA_RESOLVER_AGENT_ID": "agent_resolver_test",
         "INSIGNIA_INGESTION_V3_AGENT_ID": "agent_ingestion_test",
         "INSIGNIA_MEMORY_STORE_ID": "mem_test",
+        "INSIGNIA_ENVIRONMENT_ID": "env_test",
     }
     with patch.dict(os.environ, env, clear=True):
         yield env
