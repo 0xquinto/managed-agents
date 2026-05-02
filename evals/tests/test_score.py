@@ -268,3 +268,54 @@ def test_unknown_assertion_kind_returns_error():
     status, _, detail, _ = _check("does_not_exist", "anything", {"values": []})
     assert status == "ERROR"
     assert "unsupported type" in detail
+
+
+# ---------------------------------------------------------------------------
+# _extract_envelope_object — prose- and fence-tolerant JSON extraction
+# ---------------------------------------------------------------------------
+
+
+class TestExtractEnvelopeObject:
+
+    def test_returns_input_when_already_pure_json(self):
+        s = '{"decision":"new_contract","contract_id":null}'
+        assert score._extract_envelope_object(s) == s
+
+    def test_strips_leading_and_trailing_fences(self):
+        s = '```json\n{"decision":"new_contract"}\n```'
+        out = score._extract_envelope_object(s)
+        assert out.strip() == '{"decision":"new_contract"}'
+
+    def test_strips_leading_chain_of_thought_prose(self):
+        s = (
+            "Let me analyze this case.\n\n"
+            "1. Sender matches registry.\n"
+            "2. Subject is ambiguous.\n\n"
+            'So my decision is:\n```json\n{"decision":"continuation"}\n```'
+        )
+        out = score._extract_envelope_object(s)
+        assert out == '{"decision":"continuation"}'
+
+    def test_handles_braces_inside_json_string_values(self):
+        s = '{"rationale_short":"contains {weird} chars","decision":"triage"}'
+        assert score._extract_envelope_object(s) == s
+
+    def test_handles_escaped_quotes_in_strings(self):
+        s = 'Prose first.\n{"q":"He said \\"hi\\"","ok":true}'
+        out = score._extract_envelope_object(s)
+        assert out == '{"q":"He said \\"hi\\"","ok":true}'
+
+    def test_returns_first_object_when_multiple_present(self):
+        # Models sometimes emit multiple envelopes — the first one is canonical.
+        s = '{"a":1}{"b":2}'
+        assert score._extract_envelope_object(s) == '{"a":1}'
+
+    def test_returns_input_when_no_object_found(self):
+        s = "no JSON here at all"
+        assert score._extract_envelope_object(s) == s
+
+    def test_returns_input_for_unbalanced_braces(self):
+        # Best-effort: scan finds no closing brace → return original so caller
+        # surfaces the parse error normally.
+        s = '{"decision":"new_contract"'
+        assert score._extract_envelope_object(s) == s

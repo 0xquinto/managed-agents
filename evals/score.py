@@ -526,22 +526,47 @@ def detect_envelope_filename(run_dir: Path) -> Path:
     return run_dir / "ingestion_final_envelope.json"  # legacy default
 
 
-def _strip_markdown_fences(s: str) -> str:
-    """Strip a single ```...``` wrapper if present, leaving the rest verbatim.
+def _extract_envelope_object(s: str) -> str:
+    """Best-effort: pull a single balanced JSON object out of a noisy response.
 
-    Format violations (the wrapper itself) are reported separately by
-    `score_envelope_format` against the original `envelope_str`. Stripping here
-    just lets content assertions still run when the model wraps the JSON —
-    otherwise a single `no_markdown_fences` failure cascades into all envelope
-    assertions FAILing for the wrong reason.
+    Models violate "respond with raw JSON" rules in three ways: (1) wrap in
+    ```fences```, (2) prepend chain-of-thought prose, (3) both. To still run
+    the envelope content assertions in those cases — while letting
+    score_envelope_format flag the violation — we scan for the FIRST balanced
+    `{...}` (string-aware so braces inside JSON strings don't fool us) and
+    return that. Returns the original string when no object is found, which
+    will surface as an ordinary parse failure downstream.
     """
-    t = s.strip()
-    if not t.startswith("```"):
+    n = len(s)
+    start = -1
+    for i, ch in enumerate(s):
+        if ch == "{":
+            start = i
+            break
+    if start < 0:
         return s
-    # Drop opening ``` line (e.g. "```json") and closing ```
-    lines = t.splitlines()
-    if len(lines) >= 2 and lines[0].startswith("```") and lines[-1].strip() == "```":
-        return "\n".join(lines[1:-1])
+    depth = 0
+    in_str = False
+    esc = False
+    for i in range(start, n):
+        ch = s[i]
+        if esc:
+            esc = False
+            continue
+        if ch == "\\" and in_str:
+            esc = True
+            continue
+        if ch == '"':
+            in_str = not in_str
+            continue
+        if in_str:
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return s[start : i + 1]
     return s
 
 
@@ -552,7 +577,7 @@ def score_one_trial(expected, run_dir: Path, manifest_override: Path | None = No
         return [_result("FAIL", "envelope", f"missing {envelope_path}", "environment")]
     envelope_str = envelope_path.read_text()
     try:
-        envelope = json.loads(_strip_markdown_fences(envelope_str))
+        envelope = json.loads(_extract_envelope_object(envelope_str))
     except json.JSONDecodeError as e:
         return [
             _result("FAIL", "envelope.parse", f"json decode failed: {e}", "process"),
