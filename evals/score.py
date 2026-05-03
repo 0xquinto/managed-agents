@@ -327,8 +327,13 @@ def score_outputs(expected, run_dir: Path, manifest):
 
         if kind == "file_exists_and_nonempty":
             fmt = a.get("format", "json")
-            if local.exists():
-                ok, detail = _validate_format(local, fmt)
+            # The runner saves captured container files by basename into the
+            # trial dir (e.g. /mnt/session/out/x/manifest.json → manifest.json).
+            # Fall back to the basename if the absolute-path mirror isn't there.
+            local_basename = run_dir / Path(path).name
+            target = local if local.exists() else local_basename
+            if target.exists():
+                ok, detail = _validate_format(target, fmt)
                 out.append(_result("PASS" if ok else "FAIL", "outputs.file_exists_and_nonempty",
                                    f"{path} ({detail})", col))
             elif path in declared:

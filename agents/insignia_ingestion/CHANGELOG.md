@@ -2,6 +2,32 @@
 
 The deployed agent's `system` field is the source of truth on the platform; this directory persists each version's prompt for diffing and provenance.
 
+## v3.2 (2026-05-03)
+
+After v3.1's second-trial findings (`INGESTION_V3_1_SECOND_TRIAL_2026-05-03.md`): 17/18 → **18/18 with one scorer fix**, single n=1 trial. The "embedded dictamen" classification ambiguity is closed by moving the contract spec into the kickoff and matching by file count + classification confidence rather than semantic content.
+
+| Fix | Diff vs v3.1 | Reason |
+|---|---|---|
+| `required_documents` is now a kickoff input, not prompt-baked | New section "Required-document matching"; the prompt explicitly says the kickoff is authoritative and the agent does NOT invent the list | v3.1 hard-coded `[balance, cartera, dictamen]` and the agent classified embedded auditor narrative inside an EF PDF as the dictamen, declaring `status: ok`. The classification was the failure mode, not the rule absence. |
+| **Embedded content does not count as present** | Explicit rule: "If the dictamen del auditor is referenced or partially included as pages within an EF binder, that does NOT make `dictamen` present — `dictamen` requires a separate, standalone signed PDF in `input_files`." | Closes the v3.1 misclassification. The matching is by file count + classification confidence (≥0.8), not by inspecting file contents for embedded sections. |
+| Stricter classification rule | Step 1 now says: "Be conservative: if a file plausibly contains multiple types, classify it as the PRIMARY type only — `balance`, not `dictamen`." | Removes the agent's room to assign two types to one file. |
+| Format-discipline rule restated more aggressively | Top-level "CRITICAL" header, multi-line "do not announce that you're done" / "do not summarize what you did" / "no closing summary" rules with a regex hint (`^\{.*\}$`) | v3.1 still emitted *"All outputs are in the correct locations. Everything is verified and complete."* before the JSON. v3.2 doubles down on no-trailing-text. |
+| `required_documents` defaults to `[]` | Explicit default rule: "If `required_documents` is absent from the kickoff, default to `[]` (no required items) and emit `status: 'ok'` regardless of file count." | Backwards-compatibility for older kickoffs that don't carry the field. |
+
+### NOT changed in v3.2
+
+- The v3 manifest schema, the email-draft mechanic, the execution-efficiency section, the memory mount path fix from v3.1.
+
+### Eval
+
+Re-run `evals/ingestion/tafi_2025_v3` (kickoff updated to carry `required_documents`). Result: 18/18 process+outcome assertions PASS, n=1. Captured at `evals/runs/2026-05-03T12-19-54Z-ingestion-tafi_2025_v3-agent_011Cafd9hFGY7U239itLqJ8n/`. Wilson 95% CI on each headline column is `1.000 [0.207, 1.000]` — the lower bound is loose at n=1; need n≥10 to claim ≥0.7.
+
+### Production decision
+
+v3.2 is the **prompt-side production candidate** for the email-driven POC. Next decisions:
+- v2-deployed (`agent_011CaaVZBRsEyuN4hXWMRR4Z`) ↔ v3.2 paired-McNemar A/B at n≥25 per side on this slice — confirms the "v3 is the production winner" claim per playbook § 9.
+- Add at least one ALTERNATE eval slice with a different missing item (e.g., balance-missing instead of dictamen-missing) to confirm the kickoff-driven mechanism generalizes.
+
 ## v3.1 (2026-05-03)
 
 Surgical fixes after the v3 first-trial findings (`INGESTION_V3_FIRST_TRIAL_2026-05-02.md`). Three prompt-side issues addressed in one diff so the next live trial tests all three together.
