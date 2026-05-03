@@ -100,7 +100,8 @@ def _check_assertion(name: str, kind: str, val, a, manifest, col: str):
 
     Returns a single _result row. Supports the v3 assertion vocabulary:
       exact, range, contains_one_of, regex, min_length, is_object, is_string,
-      is_superset_of, is_subset_of_field, must_not_contain.
+      is_superset_of, is_subset_of_field, is_subset_of, must_not_contain,
+      language.
     """
     import re
     if kind == "exact":
@@ -167,15 +168,87 @@ def _check_assertion(name: str, kind: str, val, a, manifest, col: str):
         ok = not extras
         return _result("PASS" if ok else "FAIL", name,
                        f"subset of {of_field}={sorted(parent_set)} extras={sorted(extras)}", col)
+    if kind == "is_subset_of":
+        # Plain subset: actual list values must all appear in the expected
+        # `values` list. Distinct from `is_subset_of_field` which compares
+        # against a sibling field. Spec § 7.4 v3 vocab.
+        if not isinstance(val, list):
+            return _result("FAIL", name, f"not a list: {val!r}", col)
+        allowed = set(a["values"])
+        actual = set(val)
+        extras = actual - allowed
+        ok = not extras
+        return _result("PASS" if ok else "FAIL", name,
+                       f"subset of {sorted(allowed)} extras={sorted(extras)}", col)
     if kind == "must_not_contain":
-        if not isinstance(val, str):
-            return _result("FAIL", name, f"not a string: {val!r}", col)
+        # Two semantics, deliberately asymmetric — `values` is the forbidden set:
+        #   - string val → substring check (forbidden phrases in prose, e.g. "ignore previous")
+        #   - list val   → element-equality check (forbidden tags/ids, e.g. {"PII"} in flags)
+        # If you want substring semantics over a list, join it first or split your
+        # forbidden tokens. Spec § 7.4 v3 vocab.
         forbidden = a["values"]
-        hit = next((f for f in forbidden if f in val), None)
+        if isinstance(val, str):
+            hit = next((f for f in forbidden if f in val), None)
+        elif isinstance(val, list):
+            hit = next((v for v in val if v in forbidden), None)
+        else:
+            return _result("FAIL", name, f"not a string or list: {val!r}", col)
         ok = hit is None
         return _result("PASS" if ok else "FAIL", name,
                        f"forbidden={forbidden!r} hit={hit!r}", col)
+    if kind == "language":
+        # Deterministic language detection. v1 ships with `langdetect` (seed-pinned)
+        # — see `_detect_language`. The expected language is an ISO 639-1 code
+        # (es / en / pt / ...). Spec § 7.4 v3 vocab.
+        if not isinstance(val, str):
+            return _result("FAIL", name, f"not a string: {val!r}", col)
+        if len(val.strip()) < 20:
+            # Short text is an instrument confounder, not an agent miss — emit
+            # SKIP on the environment column so it's excluded from the agent's
+            # process pass-rate per playbook § 9.
+            return _result(
+                "SKIP", name,
+                f"too short to classify reliably (len={len(val)} < 20 chars)",
+                "environment",
+            )
+        try:
+            detected = _detect_language(val)
+        except _LanguageDetectUnavailable as exc:
+            return _result("ERROR", name, str(exc), col)
+        ok = detected == a["expected"]
+        return _result("PASS" if ok else "FAIL", name,
+                       f"expected={a['expected']!r} detected={detected!r}", col)
     return _result("ERROR", name, f"unsupported type {kind!r}", col)
+
+
+# ---------------------------------------------------------------------------
+# Deterministic language detection
+# ---------------------------------------------------------------------------
+
+
+class _LanguageDetectUnavailable(RuntimeError):
+    """Raised when `langdetect` isn't installed — the assertion can't run."""
+
+
+def _detect_language(text: str) -> str:
+    """Detect ISO 639-1 language code via langdetect, deterministically.
+
+    `langdetect` is non-deterministic by default (uses a stochastic Naive
+    Bayes), so we seed `DetectorFactory.seed = 0` once at import time. The
+    same input then always produces the same label across CI runs and dev
+    machines — required for paired-McNemar A/Bs to be reproducible per
+    playbook § 9.
+    """
+    try:
+        from langdetect import DetectorFactory, detect
+    except ImportError as exc:  # pragma: no cover — env-dep
+        raise _LanguageDetectUnavailable(
+            "langdetect not installed; add it to evals/requirements.txt or "
+            "the poller's [dev] extra"
+        ) from exc
+
+    DetectorFactory.seed = 0
+    return detect(text)
 
 def score_envelope(expected, envelope):
     out = []
@@ -453,19 +526,115 @@ def detect_envelope_filename(run_dir: Path) -> Path:
     return run_dir / "ingestion_final_envelope.json"  # legacy default
 
 
+def _extract_envelope_object(s: str) -> str:
+    """Best-effort: pull the LARGEST balanced JSON object out of a noisy response.
+
+    Models violate "respond with raw JSON" rules in three ways: (1) wrap in
+    ```fences```, (2) prepend chain-of-thought prose, (3) both. To still run
+    the envelope content assertions in those cases — while letting
+    score_envelope_format flag the violation — we scan every top-level
+    balanced `{...}` (string-aware so braces inside JSON strings don't fool
+    us) and return the largest one. Returns the original string when no
+    balanced object is found, which surfaces as an ordinary parse failure
+    downstream.
+
+    Why the largest, not the first: a model emitting prose like
+    `Looking at this, {"from": "x"} is the sender — my decision is:
+    {"decision": "triage", ...full envelope...}` would otherwise cause us to
+    extract the small fragment `{"from": "x"}` and silently mis-score every
+    field. The real envelope is reliably the longest balanced span.
+    """
+    candidates: list[tuple[int, int]] = []  # (start, end_inclusive)
+    n = len(s)
+    i = 0
+    while i < n:
+        if s[i] != "{":
+            i += 1
+            continue
+        # Scan forward from this opening brace to find a matching close.
+        depth = 0
+        in_str = False
+        esc = False
+        end = -1
+        for j in range(i, n):
+            ch = s[j]
+            if esc:
+                esc = False
+                continue
+            if ch == "\\" and in_str:
+                esc = True
+                continue
+            if ch == '"':
+                in_str = not in_str
+                continue
+            if in_str:
+                continue
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    end = j
+                    break
+        if end >= 0:
+            candidates.append((i, end))
+            i = end + 1
+        else:
+            # Unbalanced — bail; further `{` tokens won't help on truncated input.
+            break
+    if not candidates:
+        return s
+    # Pick the longest span. Ties → first occurrence (stable).
+    start, end = max(candidates, key=lambda se: se[1] - se[0])
+    return s[start : end + 1]
+
+
 def score_one_trial(expected, run_dir: Path, manifest_override: Path | None = None):
-    """Run all assertions against a single trial directory. Returns the result list."""
+    """Run all assertions against a single trial directory. Returns the result list.
+
+    On envelope parse failure we still run every scorer that doesn't depend
+    on a parsed envelope (`score_envelope_format`, `score_outputs`,
+    `score_manifest`, `score_quality_flags`, `score_reconciliations`,
+    `score_xlsx_structure`, `score_discipline` — all read run_dir + manifest
+    directly). Only `score_envelope` is skipped, replaced by a synthetic
+    FAIL row per envelope assertion so the aggregator's denominator stays
+    consistent across trials. Without this, parse-failure trials silently
+    drop out of the per-assertion denominator and the aggregate Wilson CI
+    on healthy assertions reads tighter than the data supports.
+    """
     envelope_path = detect_envelope_filename(run_dir)
     if not envelope_path.exists():
         return [_result("FAIL", "envelope", f"missing {envelope_path}", "environment")]
     envelope_str = envelope_path.read_text()
-    envelope = json.loads(envelope_str)
 
     mp = manifest_override or (run_dir / "manifest.json")
     manifest = load_json(mp) if mp.exists() else None
 
+    parse_failed = False
+    parse_error: str | None = None
+    try:
+        envelope = json.loads(_extract_envelope_object(envelope_str))
+    except json.JSONDecodeError as e:
+        parse_failed = True
+        parse_error = str(e)
+        envelope = None
+
     results = []
-    results += score_envelope(expected, envelope)
+    if parse_failed:
+        # One row tagging the parse failure itself.
+        results.append(_result("FAIL", "envelope.parse",
+                               f"json decode failed: {parse_error}", "process"))
+        # Synthetic FAIL per declared envelope assertion so the aggregator
+        # accounts for them (otherwise n drops by 1 and Wilson CI inflates).
+        for a in expected.get("envelope", []):
+            field = a.get("field", "?")
+            col = a.get("column", "process")
+            results.append(_result(
+                "FAIL", f"envelope.{field}",
+                "envelope unparseable; assertion not evaluable", col,
+            ))
+    else:
+        results += score_envelope(expected, envelope)
     results += score_envelope_format(expected, envelope_str)
     results += score_outputs(expected, run_dir, manifest)
     results += score_manifest(expected, manifest)

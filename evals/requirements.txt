@@ -1,0 +1,6 @@
+# Runtime deps for evals/score.py and evals/runner.py.
+# `evals/` is a flat-script directory (no package install); use:
+#   pip install -r evals/requirements.txt
+# or rely on the poller's [dev] extras which mirror this list.
+
+langdetect>=1.0.9,<2
