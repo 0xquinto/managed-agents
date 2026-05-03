@@ -14,9 +14,17 @@
       "description": "Tafi cumulative loan portfolio CSV (captured from POC; identical to parent slice)"
     }
   ],
+  "memory_stores": [
+    {
+      "memory_store_id_param": "insignia_memory",
+      "default_memory_store_id": null,
+      "access": "read_only",
+      "_comment": "Auto-mounts at /mnt/memory/. Override at runtime via --memory-store insignia_memory=mem_xxx until a default is committed (the store ID is environment-specific, so we don't pin one here)."
+    }
+  ],
   "container_paths_to_capture": [
     "/mnt/session/out/tafi_2025_v3/manifest.json"
   ],
   "_omitted_intentionally": "The dictamen del auditor PDF is NOT mounted. The agent must detect its absence, populate envelope.missing_fields=['dictamen'] (or superset), and draft a Spanish follow-up requesting it.",
-  "_note_on_mount_paths": "Per sessions-expert.md: type=file mount_paths auto-prefix with /mnt/session/uploads/. So the kickoff JSON references /mnt/session/uploads/input/tafi_2025_v3/..."
+  "_note_on_mount_paths": "Per sessions-expert.md: type=file mount_paths auto-prefix with /mnt/session/uploads/. So the kickoff JSON references /mnt/session/uploads/input/tafi_2025_v3/... Memory stores auto-mount at /mnt/memory/ with no mount_path field."
 }

@@ -77,6 +77,45 @@ class TestIsSubsetOf:
 # ---------------------------------------------------------------------------
 
 
+class TestContainsAllSubstringsCi:
+
+    def test_passes_when_all_substrings_present_case_insensitive(self):
+        status, *_ = _check(
+            "contains_all_substrings_ci",
+            "Hola, falta el dictamen del auditor y la Memoria de cálculos.",
+            {"values": ["dictamen", "memoria"]},
+        )
+        assert status == "PASS"
+
+    def test_fails_when_any_substring_missing(self):
+        status, _, detail, _ = _check(
+            "contains_all_substrings_ci",
+            "Hola, falta el dictamen del auditor.",
+            {"values": ["dictamen", "memoria"]},
+        )
+        assert status == "FAIL"
+        assert "memoria" in detail
+
+    def test_case_insensitive_match(self):
+        # The agent may use "DICTAMEN" in a header — should still match the
+        # required-substrings list "dictamen".
+        status, *_ = _check(
+            "contains_all_substrings_ci",
+            "DICTAMEN del auditor",
+            {"values": ["dictamen"]},
+        )
+        assert status == "PASS"
+
+    def test_non_string_value_fails_loudly(self):
+        status, _, detail, _ = _check(
+            "contains_all_substrings_ci",
+            ["dictamen", "memoria"],
+            {"values": ["dictamen"]},
+        )
+        assert status == "FAIL"
+        assert "not a string" in detail
+
+
 class TestMustNotContainStrings:
 
     def test_passes_when_no_forbidden_substring_present(self):

@@ -322,6 +322,178 @@ class TestRunAntBetaInjection:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# build_resources — memory_store branch
+# ---------------------------------------------------------------------------
+
+
+class TestBuildResourcesMemoryStores:
+
+    def _write_resources(self, tmp_path, spec):
+        (tmp_path / "resources.json").write_text(json.dumps(spec))
+        return tmp_path
+
+    def test_files_only_keeps_legacy_shape(self, tmp_path):
+        case_dir = self._write_resources(tmp_path, {
+            "files": [
+                {"file_id_param": "tafi_pdf", "mount_path": "input/x.pdf",
+                 "default_file_id": "file_aaa"},
+            ],
+        })
+        resources, files, memory = runner.build_resources(case_dir, {}, {})
+        assert resources == [{"type": "file", "file_id": "file_aaa", "mount_path": "input/x.pdf"}]
+        assert files == {"tafi_pdf": "file_aaa"}
+        assert memory == {}
+
+    def test_memory_store_default_id_picked_up(self, tmp_path):
+        case_dir = self._write_resources(tmp_path, {
+            "memory_stores": [
+                {"memory_store_id_param": "insignia_memory",
+                 "default_memory_store_id": "mem_aaa",
+                 "access": "read_only"},
+            ],
+        })
+        resources, files, memory = runner.build_resources(case_dir, {}, {})
+        assert files == {}
+        assert memory == {"insignia_memory": "mem_aaa"}
+        assert resources == [{
+            "type": "memory_store",
+            "memory_store_id": "mem_aaa",
+            "access": "read_only",
+        }]
+
+    def test_memory_store_override_wins_over_default(self, tmp_path):
+        case_dir = self._write_resources(tmp_path, {
+            "memory_stores": [
+                {"memory_store_id_param": "insignia_memory",
+                 "default_memory_store_id": "mem_aaa"},
+            ],
+        })
+        resources, _, memory = runner.build_resources(
+            case_dir, {}, {"insignia_memory": "mem_zzz"},
+        )
+        assert memory == {"insignia_memory": "mem_zzz"}
+        assert resources[0]["memory_store_id"] == "mem_zzz"
+
+    def test_memory_store_default_access_is_read_only(self, tmp_path):
+        case_dir = self._write_resources(tmp_path, {
+            "memory_stores": [
+                {"memory_store_id_param": "x", "default_memory_store_id": "mem_aaa"},
+            ],
+        })
+        resources, _, _ = runner.build_resources(case_dir, {}, {})
+        assert resources[0]["access"] == "read_only"
+
+    def test_memory_store_invalid_access_raises(self, tmp_path):
+        case_dir = self._write_resources(tmp_path, {
+            "memory_stores": [
+                {"memory_store_id_param": "x", "default_memory_store_id": "mem_aaa",
+                 "access": "owner"},
+            ],
+        })
+        with pytest.raises(RuntimeError, match="access='owner'"):
+            runner.build_resources(case_dir, {}, {})
+
+    def test_memory_store_missing_id_raises(self, tmp_path):
+        case_dir = self._write_resources(tmp_path, {
+            "memory_stores": [{"memory_store_id_param": "x"}],
+        })
+        with pytest.raises(RuntimeError, match="No memory_store_id"):
+            runner.build_resources(case_dir, {}, {})
+
+    def test_optional_prompt_passes_through(self, tmp_path):
+        case_dir = self._write_resources(tmp_path, {
+            "memory_stores": [
+                {"memory_store_id_param": "x", "default_memory_store_id": "mem_aaa",
+                 "prompt": "Check priors before reading uploads."},
+            ],
+        })
+        resources, _, _ = runner.build_resources(case_dir, {}, {})
+        assert resources[0]["prompt"] == "Check priors before reading uploads."
+
+    def test_files_and_memory_emit_in_order(self, tmp_path):
+        case_dir = self._write_resources(tmp_path, {
+            "files": [{"file_id_param": "p", "mount_path": "x", "default_file_id": "file_a"}],
+            "memory_stores": [{"memory_store_id_param": "m", "default_memory_store_id": "mem_a"}],
+        })
+        resources, _, _ = runner.build_resources(case_dir, {}, {})
+        assert [r["type"] for r in resources] == ["file", "memory_store"]
+
+
+class TestParseMemoryOverrides:
+
+    def test_parses_kv_pairs(self):
+        assert runner.parse_memory_overrides(["a=mem_aa", "b=mem_bb"]) == {
+            "a": "mem_aa", "b": "mem_bb",
+        }
+
+    def test_rejects_missing_equals(self):
+        with pytest.raises(ValueError, match="--memory-store"):
+            runner.parse_memory_overrides(["bad"])
+
+
+# ---------------------------------------------------------------------------
+# extract_write_tool_content — recovers manifest from agent.tool_use(write)
+# ---------------------------------------------------------------------------
+
+
+class TestExtractWriteToolContent:
+
+    def test_returns_content_for_matching_path(self):
+        events = [
+            {"type": "agent.tool_use", "name": "write",
+             "input": {"file_path": "/mnt/session/out/x/manifest.json",
+                       "content": '{"status":"blocked"}'}},
+        ]
+        assert (
+            runner.extract_write_tool_content(events, "/mnt/session/out/x/manifest.json")
+            == '{"status":"blocked"}'
+        )
+
+    def test_returns_none_for_no_match(self):
+        events = [
+            {"type": "agent.tool_use", "name": "write",
+             "input": {"file_path": "/other/path", "content": "x"}},
+        ]
+        assert runner.extract_write_tool_content(events, "/mnt/session/out/x/manifest.json") is None
+
+    def test_returns_last_match_when_multiple_writes(self):
+        # The agent may write the manifest, decide it was wrong, and re-write.
+        # Capture the FINAL state, not the first.
+        events = [
+            {"type": "agent.tool_use", "name": "write",
+             "input": {"file_path": "/m.json", "content": "first"}},
+            {"type": "agent.tool_use", "name": "write",
+             "input": {"file_path": "/m.json", "content": "second"}},
+        ]
+        assert runner.extract_write_tool_content(events, "/m.json") == "second"
+
+    def test_ignores_non_write_tool_uses(self):
+        events = [
+            {"type": "agent.tool_use", "name": "bash",
+             "input": {"command": "echo hi", "file_path": "/m.json"}},
+            {"type": "agent.tool_use", "name": "edit",
+             "input": {"file_path": "/m.json", "content": "edit-not-write"}},
+        ]
+        assert runner.extract_write_tool_content(events, "/m.json") is None
+
+    def test_skips_non_dict_events(self):
+        events = ["garbage", None, {"type": "agent.tool_use", "name": "write",
+                                     "input": {"file_path": "/m.json", "content": "x"}}]
+        assert runner.extract_write_tool_content(events, "/m.json") == "x"
+
+    def test_handles_missing_input_gracefully(self):
+        events = [{"type": "agent.tool_use", "name": "write"}]
+        assert runner.extract_write_tool_content(events, "/m.json") is None
+
+    def test_non_string_content_returns_none(self):
+        # Defensive — input.content should always be a string for write,
+        # but if it ever comes back as a structured block, don't crash.
+        events = [{"type": "agent.tool_use", "name": "write",
+                   "input": {"file_path": "/m.json", "content": {"text": "x"}}}]
+        assert runner.extract_write_tool_content(events, "/m.json") is None
+
+
 def test_resolver_kickoff_is_serializable_json():
     """Sanity: every resolver slice's kickoff parses cleanly. Catches a
     common authoring foot-gun (smart-quote substitution from chat clients).

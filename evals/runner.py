@@ -113,34 +113,73 @@ def repo_git_sha() -> str:
         return "unknown"
 
 
-def parse_file_overrides(specs: list[str]) -> dict[str, str]:
-    """--file tafi_pdf=file_xxx tafi_csv=file_yyy → {tafi_pdf: file_xxx, ...}"""
+def parse_kv_overrides(specs: list[str], flag_name: str) -> dict[str, str]:
+    """--flag NAME=VALUE NAME2=VALUE2 → {NAME: VALUE, ...}"""
     out: dict[str, str] = {}
     for spec in specs:
         if "=" not in spec:
-            raise ValueError(f"--file value must be PARAM=FILE_ID, got {spec!r}")
+            raise ValueError(f"{flag_name} value must be PARAM=VALUE, got {spec!r}")
         k, v = spec.split("=", 1)
         out[k.strip()] = v.strip()
     return out
 
 
-def build_resources(case_dir: Path, file_overrides: dict[str, str]) -> tuple[list[dict], dict[str, str]]:
-    """Returns (resources_array, resolved_file_id_by_param)."""
+def parse_file_overrides(specs: list[str]) -> dict[str, str]:
+    return parse_kv_overrides(specs, "--file")
+
+
+def parse_memory_overrides(specs: list[str]) -> dict[str, str]:
+    return parse_kv_overrides(specs, "--memory-store")
+
+
+_VALID_MEMORY_ACCESS = {"read_only", "read_write"}
+
+
+def build_resources(
+    case_dir: Path,
+    file_overrides: dict[str, str],
+    memory_overrides: dict[str, str] | None = None,
+) -> tuple[list[dict], dict[str, str], dict[str, str]]:
+    """Returns (resources_array, resolved_file_id_by_param, resolved_memory_store_id_by_param).
+
+    Memory stores auto-mount at /mnt/memory/ (no explicit mount_path field per
+    the sessions API). Resources.json declares them under `memory_stores: [...]`
+    paralleling `files: [...]`.
+    """
+    memory_overrides = memory_overrides or {}
     resources_spec = json.loads((case_dir / "resources.json").read_text())
-    resolved: dict[str, str] = {}
+    resolved_files: dict[str, str] = {}
+    resolved_memory: dict[str, str] = {}
     out: list[dict] = []
     for f in resources_spec.get("files", []):
         param = f["file_id_param"]
         file_id = file_overrides.get(param) or f.get("default_file_id")
         if not file_id:
             raise RuntimeError(f"No file_id for param {param!r} (provide via --file {param}=file_xxx or set default_file_id in resources.json)")
-        resolved[param] = file_id
+        resolved_files[param] = file_id
         out.append({
             "type": "file",
             "file_id": file_id,
             "mount_path": f["mount_path"],
         })
-    return out, resolved
+    for m in resources_spec.get("memory_stores", []):
+        param = m["memory_store_id_param"]
+        store_id = memory_overrides.get(param) or m.get("default_memory_store_id")
+        if not store_id:
+            raise RuntimeError(f"No memory_store_id for param {param!r} (provide via --memory-store {param}=mem_xxx or set default_memory_store_id in resources.json)")
+        access = m.get("access", "read_only")
+        if access not in _VALID_MEMORY_ACCESS:
+            raise RuntimeError(f"memory_store {param!r}: access={access!r} not in {sorted(_VALID_MEMORY_ACCESS)}")
+        resolved_memory[param] = store_id
+        block: dict = {
+            "type": "memory_store",
+            "memory_store_id": store_id,
+            "access": access,
+        }
+        if m.get("prompt"):
+            block["prompt"] = m["prompt"]
+        out.append(block)
+    return out, resolved_files, resolved_memory
 
 
 RESOLVER_PARAPHRASE = "canonical"
@@ -392,6 +431,34 @@ def fetch_container_file(session_id: str, container_path: str) -> str | None:
     return None
 
 
+def extract_write_tool_content(events: list[dict], container_path: str) -> str | None:
+    """Recover a file's content from the agent's `write` tool_use event.
+
+    Per v3 ingestion prompt: the agent writes the manifest via the `write`
+    tool, so the full content lives in the `agent.tool_use` event's
+    `input.content`. Cheaper and more reliable than firing a follow-up
+    bash turn (the live trial on 2026-05-02 showed fetch_container_file
+    returning None despite the write succeeding).
+
+    Returns the content string from the LAST matching write event, or None.
+    """
+    last: str | None = None
+    for e in events:
+        if not isinstance(e, dict):
+            continue
+        if e.get("type") != "agent.tool_use":
+            continue
+        if e.get("name") != "write":
+            continue
+        inp = e.get("input") or {}
+        if inp.get("file_path") != container_path:
+            continue
+        content = inp.get("content")
+        if isinstance(content, str):
+            last = content
+    return last
+
+
 # ------------------------- Run orchestration -------------------------
 
 
@@ -447,15 +514,21 @@ def run_trial(case_dir: Path, paraphrase: str, trial_idx: int, agent_id: str, en
         # Resolver agents return envelope-only — no container artifacts to fetch.
         for container_path in container_paths if role != "resolver" else []:
             fname = container_path.split("/")[-1]
-            try:
-                content = fetch_container_file(session_id, container_path)
-            except Exception as e:
-                content = None
-                print(f"  warn: fetch {container_path} raised {e}", file=sys.stderr)
+            # Try the write-tool fast path first (no extra session turn).
+            content = extract_write_tool_content(events, container_path)
+            source = "write_event" if content else None
+            if not content:
+                try:
+                    content = fetch_container_file(session_id, container_path)
+                    source = "bash_fallback" if content else None
+                except Exception as e:
+                    content = None
+                    print(f"  warn: fetch {container_path} raised {e}", file=sys.stderr)
             if content:
                 (trial_dir / fname).write_text(content)
                 if fname == "manifest.json":
                     summary["manifest_captured"] = True
+                    summary["manifest_source"] = source
 
         if not reached_idle:
             summary["error"] = f"timeout after {timeout_seconds}s; final status {final_status!r}"
@@ -484,7 +557,8 @@ def emit_manifest(out_dir: Path, case_dir: Path, agent_id: str, env_id: str,
                   resolved_files: dict[str, str], paraphrases: list[str],
                   trials_per_paraphrase: int, runner_path: Path, score_path: Path,
                   trial_summaries: list[dict], started: str, ended: str,
-                  timeout_seconds: int, role: str = "ingestion"):
+                  timeout_seconds: int, role: str = "ingestion",
+                  resolved_memory: dict[str, str] | None = None):
     expected_path = case_dir / "expected.json"
     spec_path = case_dir / "spec.md"
     expected = json.loads(expected_path.read_text())
@@ -524,6 +598,7 @@ def emit_manifest(out_dir: Path, case_dir: Path, agent_id: str, env_id: str,
         },
         "inputs": {
             "files_by_param": resolved_files,
+            "memory_stores_by_param": resolved_memory or {},
         },
         "trials": {
             "paraphrases": paraphrases,
@@ -557,6 +632,8 @@ def main():
     p.add_argument("--agent-id", required=True)
     p.add_argument("--env-id", required=True)
     p.add_argument("--file", action="append", default=[], help="Override resources.json default file_id: --file param=file_xxx")
+    p.add_argument("--memory-store", action="append", default=[], dest="memory_store",
+                   help="Override resources.json default memory_store_id: --memory-store param=mem_xxx")
     p.add_argument("--paraphrases", default=None,
                    help="Comma-separated paraphrase ids, or 'all'. Default: first available paraphrase only.")
     p.add_argument("--trials-per-paraphrase", type=int, default=1)
@@ -574,15 +651,19 @@ def main():
     role = detect_role(args.case)
 
     file_overrides = parse_file_overrides(args.file)
+    memory_overrides = parse_memory_overrides(args.memory_store)
     if role == "resolver":
         # Resolver kickoffs carry the email/registry inline — no file uploads.
         if file_overrides:
             print(f"WARN: --file overrides ignored for resolver case ({list(file_overrides)})", file=sys.stderr)
+        if memory_overrides:
+            print(f"WARN: --memory-store overrides ignored for resolver case ({list(memory_overrides)})", file=sys.stderr)
         resources: list[dict] = []
         resolved_files: dict[str, str] = {}
+        resolved_memory: dict[str, str] = {}
         container_paths: list[str] = []
     else:
-        resources, resolved_files = build_resources(case_dir, file_overrides)
+        resources, resolved_files, resolved_memory = build_resources(case_dir, file_overrides, memory_overrides)
         resources_spec = json.loads((case_dir / "resources.json").read_text())
         container_paths = resources_spec.get("container_paths_to_capture", [])
 
@@ -603,6 +684,8 @@ def main():
     print(f"Out:  {out_dir}")
     print(f"SUT:  agent={args.agent_id} env={args.env_id}")
     print(f"Files: {resolved_files}")
+    if resolved_memory:
+        print(f"Memory stores: {resolved_memory}")
     print(f"Paraphrases: {paraphrases}")
     print(f"Trials per paraphrase: {args.trials_per_paraphrase}")
     print(f"Total trials: {len(paraphrases) * args.trials_per_paraphrase}")
@@ -632,6 +715,7 @@ def main():
         paraphrases, args.trials_per_paraphrase,
         repo_root / "runner.py", repo_root / "score.py",
         trial_summaries, started, ended, args.timeout_seconds, role,
+        resolved_memory=resolved_memory,
     )
 
     print(f"\nManifest written to {out_dir / 'manifest.json'}")

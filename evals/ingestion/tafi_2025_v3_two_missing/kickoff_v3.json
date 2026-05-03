@@ -1,0 +1,7 @@
+{
+  "type": "user",
+  "message": {
+    "role": "user",
+    "content": "{\"contract_id\":\"tafi_2025_v3_two_missing\",\"client_name\":\"Financiera Tafi\",\"input_files\":[\"/mnt/session/uploads/input/tafi_2025_v3_two_missing/Borrador de EF 2025 - Financiera Tafi - MICI.pdf\",\"/mnt/session/uploads/input/tafi_2025_v3_two_missing/Cartera Total TAFI.csv\"],\"required_documents\":[\"balance\",\"cartera\",\"dictamen\",\"memoria\"],\"email_context\":{\"from\":\"ana@tafi.com.ar\",\"to\":[\"contracts@insignia.com\"],\"cc\":[],\"subject\":\"Análisis financiero Q1\",\"conversationId\":\"AAQk-conv-tafi\",\"messageId\":\"AAMk-msg-tafi-1\",\"body_text_excerpt\":\"Hola, te envío el balance y la cartera para el análisis Q1.\",\"received_at\":\"2026-05-01T14:22:11Z\",\"language\":\"es\"},\"memory_paths\":{\"priors\":\"/mnt/memory/insignia-memory/priors/tafi_2025_v3_two_missing.json\",\"tone_examples_dir\":\"/mnt/memory/insignia-memory/tone_examples/\"}}"
+  }
+}
