@@ -527,68 +527,114 @@ def detect_envelope_filename(run_dir: Path) -> Path:
 
 
 def _extract_envelope_object(s: str) -> str:
-    """Best-effort: pull a single balanced JSON object out of a noisy response.
+    """Best-effort: pull the LARGEST balanced JSON object out of a noisy response.
 
     Models violate "respond with raw JSON" rules in three ways: (1) wrap in
     ```fences```, (2) prepend chain-of-thought prose, (3) both. To still run
     the envelope content assertions in those cases — while letting
-    score_envelope_format flag the violation — we scan for the FIRST balanced
-    `{...}` (string-aware so braces inside JSON strings don't fool us) and
-    return that. Returns the original string when no object is found, which
-    will surface as an ordinary parse failure downstream.
+    score_envelope_format flag the violation — we scan every top-level
+    balanced `{...}` (string-aware so braces inside JSON strings don't fool
+    us) and return the largest one. Returns the original string when no
+    balanced object is found, which surfaces as an ordinary parse failure
+    downstream.
+
+    Why the largest, not the first: a model emitting prose like
+    `Looking at this, {"from": "x"} is the sender — my decision is:
+    {"decision": "triage", ...full envelope...}` would otherwise cause us to
+    extract the small fragment `{"from": "x"}` and silently mis-score every
+    field. The real envelope is reliably the longest balanced span.
     """
+    candidates: list[tuple[int, int]] = []  # (start, end_inclusive)
     n = len(s)
-    start = -1
-    for i, ch in enumerate(s):
-        if ch == "{":
-            start = i
+    i = 0
+    while i < n:
+        if s[i] != "{":
+            i += 1
+            continue
+        # Scan forward from this opening brace to find a matching close.
+        depth = 0
+        in_str = False
+        esc = False
+        end = -1
+        for j in range(i, n):
+            ch = s[j]
+            if esc:
+                esc = False
+                continue
+            if ch == "\\" and in_str:
+                esc = True
+                continue
+            if ch == '"':
+                in_str = not in_str
+                continue
+            if in_str:
+                continue
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    end = j
+                    break
+        if end >= 0:
+            candidates.append((i, end))
+            i = end + 1
+        else:
+            # Unbalanced — bail; further `{` tokens won't help on truncated input.
             break
-    if start < 0:
+    if not candidates:
         return s
-    depth = 0
-    in_str = False
-    esc = False
-    for i in range(start, n):
-        ch = s[i]
-        if esc:
-            esc = False
-            continue
-        if ch == "\\" and in_str:
-            esc = True
-            continue
-        if ch == '"':
-            in_str = not in_str
-            continue
-        if in_str:
-            continue
-        if ch == "{":
-            depth += 1
-        elif ch == "}":
-            depth -= 1
-            if depth == 0:
-                return s[start : i + 1]
-    return s
+    # Pick the longest span. Ties → first occurrence (stable).
+    start, end = max(candidates, key=lambda se: se[1] - se[0])
+    return s[start : end + 1]
 
 
 def score_one_trial(expected, run_dir: Path, manifest_override: Path | None = None):
-    """Run all assertions against a single trial directory. Returns the result list."""
+    """Run all assertions against a single trial directory. Returns the result list.
+
+    On envelope parse failure we still run every scorer that doesn't depend
+    on a parsed envelope (`score_envelope_format`, `score_outputs`,
+    `score_manifest`, `score_quality_flags`, `score_reconciliations`,
+    `score_xlsx_structure`, `score_discipline` — all read run_dir + manifest
+    directly). Only `score_envelope` is skipped, replaced by a synthetic
+    FAIL row per envelope assertion so the aggregator's denominator stays
+    consistent across trials. Without this, parse-failure trials silently
+    drop out of the per-assertion denominator and the aggregate Wilson CI
+    on healthy assertions reads tighter than the data supports.
+    """
     envelope_path = detect_envelope_filename(run_dir)
     if not envelope_path.exists():
         return [_result("FAIL", "envelope", f"missing {envelope_path}", "environment")]
     envelope_str = envelope_path.read_text()
-    try:
-        envelope = json.loads(_extract_envelope_object(envelope_str))
-    except json.JSONDecodeError as e:
-        return [
-            _result("FAIL", "envelope.parse", f"json decode failed: {e}", "process"),
-            *score_envelope_format(expected, envelope_str),
-        ]
 
     mp = manifest_override or (run_dir / "manifest.json")
     manifest = load_json(mp) if mp.exists() else None
 
+    parse_failed = False
+    parse_error: str | None = None
+    try:
+        envelope = json.loads(_extract_envelope_object(envelope_str))
+    except json.JSONDecodeError as e:
+        parse_failed = True
+        parse_error = str(e)
+        envelope = None
+
     results = []
-    results += score_envelope(expected, envelope)
+    if parse_failed:
+        # One row tagging the parse failure itself.
+        results.append(_result("FAIL", "envelope.parse",
+                               f"json decode failed: {parse_error}", "process"))
+        # Synthetic FAIL per declared envelope assertion so the aggregator
+        # accounts for them (otherwise n drops by 1 and Wilson CI inflates).
+        for a in expected.get("envelope", []):
+            field = a.get("field", "?")
+            col = a.get("column", "process")
+            results.append(_result(
+                "FAIL", f"envelope.{field}",
+                "envelope unparseable; assertion not evaluable", col,
+            ))
+    else:
+        results += score_envelope(expected, envelope)
     results += score_envelope_format(expected, envelope_str)
     results += score_outputs(expected, run_dir, manifest)
     results += score_manifest(expected, manifest)

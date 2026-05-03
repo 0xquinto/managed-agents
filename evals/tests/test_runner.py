@@ -115,6 +115,213 @@ class TestListParaphrasesIngestion:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# _to_api_event_shape — translation + strict validation
+# ---------------------------------------------------------------------------
+
+
+class TestToApiEventShape:
+
+    def test_sdk_string_content_translates_to_api_shape(self):
+        out = runner._to_api_event_shape({
+            "type": "user",
+            "message": {"role": "user", "content": "hello"},
+        })
+        assert out == {
+            "type": "user.message",
+            "content": [{"type": "text", "text": "hello"}],
+        }
+
+    def test_sdk_list_content_keeps_blocks_swaps_wrapper(self):
+        blocks = [{"type": "text", "text": "a"}, {"type": "text", "text": "b"}]
+        out = runner._to_api_event_shape({
+            "type": "user",
+            "message": {"role": "user", "content": blocks},
+        })
+        assert out == {"type": "user.message", "content": blocks}
+
+    def test_already_api_shape_is_identity(self):
+        ev = {"type": "user.message", "content": [{"type": "text", "text": "hi"}]}
+        assert runner._to_api_event_shape(ev) is ev
+
+    def test_non_user_event_is_identity(self):
+        ev = {"type": "user.tool_confirmation", "tool_use_id": "x"}
+        assert runner._to_api_event_shape(ev) is ev
+
+    def test_sdk_with_string_message_raises(self):
+        # Earlier code would silently forward this and the CLI would 400 with
+        # an opaque "invalid event type" message far from the source.
+        with pytest.raises(RuntimeError, match="missing dict 'message'"):
+            runner._to_api_event_shape({"type": "user", "message": "wrong"})
+
+    def test_sdk_with_dict_content_raises(self):
+        with pytest.raises(RuntimeError, match="must be str or list"):
+            runner._to_api_event_shape({
+                "type": "user",
+                "message": {"role": "user", "content": {"text": "wrong"}},
+            })
+
+    def test_sdk_with_none_content_raises(self):
+        with pytest.raises(RuntimeError, match="must be str or list"):
+            runner._to_api_event_shape({
+                "type": "user",
+                "message": {"role": "user", "content": None},
+            })
+
+
+# ---------------------------------------------------------------------------
+# _normalize_stop_reason + poll_until_idle
+# ---------------------------------------------------------------------------
+
+
+class TestNormalizeStopReason:
+
+    def test_dict_form_unwraps_type_field(self):
+        # The SDK wire shape — verified against captured trial events on
+        # 2026-05-02. Earlier `f"idle:{stop}"` produced literal
+        # "idle:{'type': 'end_turn'}" garbage strings.
+        assert runner._normalize_stop_reason({"type": "end_turn"}) == "end_turn"
+
+    def test_string_form_passthrough(self):
+        assert runner._normalize_stop_reason("end_turn") == "end_turn"
+
+    def test_none_returns_none(self):
+        assert runner._normalize_stop_reason(None) is None
+
+    def test_dict_without_type_returns_none(self):
+        assert runner._normalize_stop_reason({"reason": "x"}) is None
+
+    def test_unexpected_shape_returns_none(self):
+        assert runner._normalize_stop_reason(42) is None
+
+
+class TestPollUntilIdle:
+
+    @pytest.fixture(autouse=True)
+    def _patch_sleep(self, monkeypatch):
+        # Tests must not actually sleep.
+        def _no_sleep(s):
+            del s
+        monkeypatch.setattr(runner.time, "sleep", _no_sleep)
+
+    def _patch_events(self, monkeypatch, events_seq):
+        """events_seq is a list of event-lists, one per poll iteration."""
+        it = iter(events_seq)
+        def _list(sid):
+            del sid
+            return next(it)
+        monkeypatch.setattr(runner, "list_events", _list)
+
+    def test_clean_end_turn_returns_true_idle_end_turn(self, monkeypatch):
+        self._patch_events(monkeypatch, [[
+            {"type": "user.message"},
+            {"type": "agent.message"},
+            {"type": "session.status_idle", "stop_reason": {"type": "end_turn"}},
+        ]])
+        ok, status = runner.poll_until_idle("sesn_x", timeout_seconds=10)
+        assert ok is True
+        assert status == "idle:end_turn"
+
+    def test_requires_action_is_NOT_clean(self, monkeypatch):
+        # The bug class C1 surfaced: requires_action means the agent halted
+        # needing tool confirmation it can't take. NOT a clean trial.
+        self._patch_events(monkeypatch, [[
+            {"type": "session.status_idle", "stop_reason": {"type": "requires_action"}},
+        ]])
+        ok, status = runner.poll_until_idle("sesn_x", timeout_seconds=10)
+        assert ok is False
+        assert status == "idle:requires_action"
+
+    def test_retries_exhausted_is_NOT_clean(self, monkeypatch):
+        self._patch_events(monkeypatch, [[
+            {"type": "session.status_idle",
+             "stop_reason": {"type": "retries_exhausted"}},
+        ]])
+        ok, status = runner.poll_until_idle("sesn_x", timeout_seconds=10)
+        assert ok is False
+        assert status == "idle:retries_exhausted"
+
+    def test_terminated_is_NOT_clean(self, monkeypatch):
+        self._patch_events(monkeypatch, [[
+            {"type": "session.status_terminated"},
+        ]])
+        ok, status = runner.poll_until_idle("sesn_x", timeout_seconds=10)
+        assert ok is False
+        assert status == "terminated"
+
+    def test_timeout_returns_false(self, monkeypatch):
+        # Empty event stream every poll → never sees terminal event.
+        ticks = {"n": 0}
+        def fake_time():
+            ticks["n"] += 1
+            return float(ticks["n"]) * 1000.0  # blow past any deadline
+        monkeypatch.setattr(runner.time, "time", fake_time)
+        def _empty_list(sid):
+            del sid
+            return []
+        monkeypatch.setattr(runner, "list_events", _empty_list)
+        ok, status = runner.poll_until_idle("sesn_x", timeout_seconds=0)
+        assert ok is False
+        assert status == "timeout"
+
+    def test_skips_non_dict_events(self, monkeypatch):
+        # Defensive — list_events occasionally returns garbage shapes.
+        self._patch_events(monkeypatch, [[
+            "garbage",
+            {"type": "session.status_idle", "stop_reason": {"type": "end_turn"}},
+        ]])
+        ok, status = runner.poll_until_idle("sesn_x", timeout_seconds=10)
+        assert ok is True
+        assert status == "idle:end_turn"
+
+
+# ---------------------------------------------------------------------------
+# run_ant beta-header injection
+# ---------------------------------------------------------------------------
+
+
+class TestRunAntBetaInjection:
+
+    def _run(self, monkeypatch, args):
+        captured: list[list[str]] = []
+
+        class _FakeResult:
+            returncode = 0
+            stdout = "{}"
+            stderr = ""
+
+        def fake_run(cmd, capture_output=True, text=True):
+            del capture_output, text
+            captured.append(list(cmd))
+            return _FakeResult()
+
+        monkeypatch.setattr(runner.subprocess, "run", fake_run)
+        runner.run_ant(args)
+        assert captured, "subprocess.run was never invoked"
+        return captured[-1]
+
+    def test_beta_subcommand_gets_header_injected(self, monkeypatch):
+        cmd = self._run(monkeypatch, ["beta:agents", "list"])
+        assert "--beta" in cmd
+        assert "managed-agents-2026-04-01" in cmd
+
+    def test_explicit_beta_is_respected(self, monkeypatch):
+        cmd = self._run(monkeypatch, ["beta:agents", "list", "--beta", "managed-agents-2026-04-01-research-preview"])
+        # No double-injection.
+        assert cmd.count("--beta") == 1
+        assert "managed-agents-2026-04-01-research-preview" in cmd
+        assert "managed-agents-2026-04-01" not in cmd
+
+    def test_non_beta_subcommand_gets_no_injection(self, monkeypatch):
+        cmd = self._run(monkeypatch, ["messages", "create"])
+        assert "--beta" not in cmd
+
+
+# ---------------------------------------------------------------------------
+# Resolver kickoff fixtures sanity
+# ---------------------------------------------------------------------------
+
+
 def test_resolver_kickoff_is_serializable_json():
     """Sanity: every resolver slice's kickoff parses cleanly. Catches a
     common authoring foot-gun (smart-quote substitution from chat clients).

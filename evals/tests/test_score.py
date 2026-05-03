@@ -264,6 +264,62 @@ class TestLanguageDetection:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# score_one_trial — parse-failure synthetic FAIL behavior
+# ---------------------------------------------------------------------------
+
+
+class TestScoreOneTrialParseFailure:
+
+    def _setup_trial(self, tmp_path, envelope_text: str):
+        """Stage a minimal trial dir with a captured envelope."""
+        (tmp_path / "resolver_final_envelope.json").write_text(envelope_text)
+        return tmp_path
+
+    def test_parse_failure_emits_synthetic_FAIL_per_envelope_assertion(self, tmp_path):
+        # Without these synthetic rows, the multi-trial aggregator's
+        # denominator drops by 1 for every envelope assertion declared in
+        # expected.json — silently inflating the Wilson CI on the surviving
+        # trials. The fix replaces the old "drop the rest" behavior with
+        # a one-FAIL-per-assertion fan-out.
+        d = self._setup_trial(tmp_path, "this is not JSON at all")
+        expected = {
+            "envelope": [
+                {"field": "decision", "type": "exact", "value": "triage", "column": "process"},
+                {"field": "confidence", "type": "range", "min": 0.0, "max": 1.0, "column": "outcome"},
+            ],
+            "envelope_format": [],
+        }
+        results = score.score_one_trial(expected, d)
+        names = [r[1] for r in results]
+        # The parse-failure tag itself
+        assert "envelope.parse" in names
+        # And one FAIL per declared envelope assertion
+        assert "envelope.decision" in names
+        assert "envelope.confidence" in names
+        # The fanned-out rows preserve the column attribution from expected
+        decision_row = next(r for r in results if r[1] == "envelope.decision")
+        confidence_row = next(r for r in results if r[1] == "envelope.confidence")
+        assert decision_row[0] == "FAIL"
+        assert decision_row[3] == "process"
+        assert confidence_row[3] == "outcome"
+
+    def test_clean_parse_does_not_emit_synthetic_FAILs(self, tmp_path):
+        d = self._setup_trial(tmp_path,
+            '{"decision":"triage","confidence":0.5}')
+        expected = {
+            "envelope": [
+                {"field": "decision", "type": "exact", "value": "triage", "column": "process"},
+            ],
+            "envelope_format": [],
+        }
+        results = score.score_one_trial(expected, d)
+        # Single PASS for the decision assertion, no synthetic parse-failure row
+        assert "envelope.parse" not in [r[1] for r in results]
+        decision_row = next(r for r in results if r[1] == "envelope.decision")
+        assert decision_row[0] == "PASS"
+
+
 def test_unknown_assertion_kind_returns_error():
     status, _, detail, _ = _check("does_not_exist", "anything", {"values": []})
     assert status == "ERROR"
@@ -305,9 +361,19 @@ class TestExtractEnvelopeObject:
         out = score._extract_envelope_object(s)
         assert out == '{"q":"He said \\"hi\\"","ok":true}'
 
-    def test_returns_first_object_when_multiple_present(self):
-        # Models sometimes emit multiple envelopes — the first one is canonical.
-        s = '{"a":1}{"b":2}'
+    def test_returns_largest_object_when_multiple_present(self):
+        # Real failure mode: prose mentions a small JSON snippet before the
+        # actual envelope. Earlier code returned the first balanced object —
+        # which would silently grab the prose fragment and mis-score every
+        # field. The largest balanced span is reliably the real envelope.
+        s = '{"a":1} reasoning... {"decision":"triage","confidence":0.5,"long":true}'
+        assert score._extract_envelope_object(s) == \
+            '{"decision":"triage","confidence":0.5,"long":true}'
+
+    def test_breaks_tie_in_favor_of_first_when_sizes_equal(self):
+        # Edge: equal-length candidates → first occurrence (stable). Documents
+        # the tiebreak so future refactors don't silently flip ordering.
+        s = '{"a":1}\n{"b":2}'
         assert score._extract_envelope_object(s) == '{"a":1}'
 
     def test_returns_input_when_no_object_found(self):

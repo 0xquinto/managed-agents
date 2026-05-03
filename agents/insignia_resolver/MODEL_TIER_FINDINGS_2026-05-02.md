@@ -13,21 +13,31 @@ Three resolver-prompt versions deployed against the 4 resolver eval slices (`new
 
 ## Content pass rates
 
-Each cell is `process+outcome PASS / total content assertions`. Format assertion (no_markdown_fences) reported separately below.
+Each cell is `(process + outcome PASS) / (total content assertions)` for that slice. Slice content denominators come from the `envelope` array in each `expected.json`: new_contract=6, continuation=6, supersession=4, triage=6 → 22 total. Format-discipline (`no_markdown_fences`) is now `column: environment` (per the analysis below) and reported separately.
 
 | Slice | v1-haiku | v2-haiku | v3-haiku | v2-sonnet |
 |---|---|---|---|---|
-| new_contract | 6/6 | 6/6 | 6/6 | 6/6 |
-| continuation | 7/7 | 7/7 | 7/7 | **3/7** |
-| supersession | 5/5 | 5/5 | 5/5 | **0/5** |
-| triage | **1/6** | **6/6** | 6/6 | 6/6 |
-| **total** | 19/24 | 24/24 | 24/24 | **15/24** |
+| new_contract (n=6) | 6/6 | 6/6 | 6/6 | 6/6 |
+| continuation (n=6) | 6/6 | 6/6 | 6/6 | **2/6** |
+| supersession (n=4) | 4/4 | 4/4 | 4/4 | **0/4** |
+| triage (n=6) | **1/6** | **6/6** | 6/6 | 6/6 |
+| **total** | 17/22 | **22/22** | **22/22** | **14/22** |
 
-## Format pass rate
+## Format pass rate (`column: environment` — informational)
 
 | Slice | v1-haiku | v2-haiku | v3-haiku | v2-sonnet |
 |---|---|---|---|---|
 | no_markdown_fences | 0/4 | 0/4 | 0/4 | **4/4** |
+
+## Captured run directories (replayability)
+
+For audit / replay, the captured trial directories are:
+
+- v1-haiku: `evals/runs/2026-05-02T20-{34,35,37,50,51,53}-*-resolver-*-agent_011CaeMn6bMMjsR5g7ZvbW7e/` (the new_contract slice has two captures — the first errored on the SDK→API event-shape bug pre-fix `a41a3ea`; the second is the authoritative one)
+- v2-haiku n=1: `evals/runs/2026-05-02T21-{36,40,41}-*-resolver-*-agent_011CaeTkSmBo1aHzsWdkJuqJ/`
+- v2-haiku n=10: `evals/runs/2026-05-02T23-{20,23,44}-*` and `2026-05-03T00-08-*-resolver-*-agent_011CaeTkSmBo1aHzsWdkJuqJ/`
+- v3-haiku: `evals/runs/2026-05-02T22-{27,28,30,31}-*-resolver-*-agent_011CaeXhWLsSs5poLhwh5712/`
+- v2-sonnet: `evals/runs/2026-05-02T22-{43,44,46,49}-*-resolver-*-agent_011CaeYvhVpYELkvmW8jx9mU/`
 
 ## Findings
 
@@ -35,16 +45,16 @@ Each cell is `process+outcome PASS / total content assertions`. Format assertion
 
 2. **v2 → v3: fence-priming hypothesis refuted.** Stripping every fence token from the prompt + dropping ❌ negative examples + end-anchoring the single positive example produced ZERO change in fence-wrapping (still 0/4). The hypothesis "negative examples anchor bad behavior on small models" doesn't hold here — Haiku wraps in fences regardless of what the prompt says about format.
 
-3. **Cross-tier: fence-wrapping is Haiku-specific.** The same v2 prompt on Sonnet produces clean `{...}` JSON across all 4 slices, no fences anywhere. Sonnet honors format directives; Haiku appears to ignore them on JSON output, defaulting to ```json fences regardless of system-prompt instruction.
+3. **Cross-tier hypothesis (n=1, weak): fence-wrapping is Haiku-specific.** The v2 prompt on Sonnet produced clean `{...}` JSON across all 4 slices (4/4) on a single trial each; the same prompt on Haiku produced fences across 4/4 slices in n=10. *This is a directional result on small samples — it would need cross-prompt n≥10 on Sonnet to rule out luck or prompt-specific artifacts.* If the hypothesis holds, Haiku's fence-wrapping would be a model default rather than a prompt-induced behavior, which matches the v3-haiku refutation: stripping every fence token from the prompt + dropping negative examples produced zero change in v3 (n=1 each).
 
-4. **Cross-tier: Sonnet over-applies conservatism.** Sonnet read "Do not guess. When a continuation match is partial → triage" too literally — it routed exact-sender-match continuation cases to triage because it couldn't read the memory-file priors. Sonnet trades format-compliance for classification accuracy on the continuation + supersession slices.
+4. **Cross-tier hypothesis (n=1, weak): Sonnet over-applies the partial-match rule.** Sonnet's continuation envelope (`agent_011CaeYvhVpYELkvmW8jx9mU`, single trial) routed an exact-sender-match case to triage citing "priors file absent". The captured `rationale_short` text directly references the unreadable memory file as the trigger. *Mechanism is plausible but unverified across prompts/cases — would need Sonnet n≥10 across all 4 slices, ideally with a Sonnet-specific prompt that loosens the rule, to confirm the model-vs-prompt attribution.*
 
 ## Practical implications
 
-- **Production should use Haiku v2.** Best content score (24/24), cheapest, fastest. The fence-wrapping is cosmetic — score.py's envelope extractor strips it, and the poller's SDK backend reads `agent.message` text content blocks which the API already serves un-fenced (the fences are inside the text block, not wrapping it).
-- **`no_markdown_fences` should probably move from `column: process` to `column: environment`** in the resolver eval `expected.json` files. The current setup charges Haiku for a behavior that has no functional consequence in the deployed pipeline. Keep the assertion (it's still an early-warning signal) but stop using it to compute the agent's process pass-rate.
-- **Sonnet is the wrong tier for the resolver role.** The over-conservatism on continuation/supersession is exactly the failure mode the v2 rule was designed to prevent on the OPPOSITE end — bare-body cases routed to triage was the v1 fix; Sonnet now over-extends "go to triage" in the other direction. Haiku's literal-rule-following is the better fit for this role.
-- **For agents where format discipline matters more than classification edge-cases (e.g. structured JSON tool result pipelines), Sonnet is worth the cost.** Different agents in the pipeline can use different tiers.
+- **Production keeps Haiku v2.** Content 22/22 at n=1 and 22/22 process at n=10 with one outcome flake (`triage_payload.candidates` 8/10 — see `N10_FANOUT_2026-05-02.md`). Fence-wrapping is cosmetic in the deployed pipeline because the SDK's `agent.message` event already serves text content blocks the CLI 400s on but the SDK reads cleanly — *this should be re-confirmed when the resolver is wired into the production poller's dispatch path; it's expected behavior per `AnthropicSDKSessionsBackend` design but I haven't observed it end-to-end yet.*
+- **`no_markdown_fences` moved from `column: process` to `column: environment`** in `1ec1022`. The current setup charges Haiku for a behavior with no functional consequence in the deployed pipeline. The assertion still runs as an early-warning signal if score.py's extractor or the SDK backend ever changes upstream.
+- **Sonnet is wrong for the resolver role at n=1; Haiku is right.** Until we have Sonnet n≥10, "Sonnet is wrong" is a directional claim on a single trial each — but the magnitude (continuation 2/6 + supersession 0/4 = 2/10 vs Haiku's 10/10) is large enough that the right cost-discipline move is to ship Haiku and re-litigate Sonnet only if Haiku's outcome flakes regress.
+- **For agents where format discipline genuinely matters (e.g. structured JSON tool result pipelines), Sonnet may be worth the cost** — but classification edge-cases will need a Sonnet-specific prompt loosening the partial-match rule. Different pipeline agents can use different tiers.
 
 ## Cost
 

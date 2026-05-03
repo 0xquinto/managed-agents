@@ -218,18 +218,33 @@ def _to_api_event_shape(event: dict) -> dict:
     builds a wrapper around exactly that. The CLI/REST API instead expects
     `{type: "user.message", content: [{type: "text", text: "..."}]}` — the SDK does
     this translation internally; the eval runner has to do it explicitly because
-    it shells out to `ant`. Identity for already-API-shaped events.
+    it shells out to `ant`. Identity for events that already use the API shape
+    (anything not starting with `type: "user"`, e.g. `user.message`,
+    `user.tool_confirmation`, etc.).
     """
-    if event.get("type") == "user" and isinstance(event.get("message"), dict):
-        content = event["message"].get("content")
-        if isinstance(content, str):
-            return {
-                "type": "user.message",
-                "content": [{"type": "text", "text": content}],
-            }
-        if isinstance(content, list):
-            return {"type": "user.message", "content": content}
-    return event
+    if event.get("type") != "user":
+        return event
+    # SDK-shape detected — every required-field violation from here on raises
+    # loudly rather than silently forwarding malformed events to the CLI
+    # (where they surface as opaque "invalid event type" 400s far from the
+    # source of malformation).
+    msg = event.get("message")
+    if not isinstance(msg, dict):
+        raise RuntimeError(
+            f"SDK-shape user event missing dict 'message': {event!r}"
+        )
+    content = msg.get("content")
+    if isinstance(content, str):
+        return {
+            "type": "user.message",
+            "content": [{"type": "text", "text": content}],
+        }
+    if isinstance(content, list):
+        return {"type": "user.message", "content": content}
+    raise RuntimeError(
+        f"SDK-shape user event 'content' must be str or list, "
+        f"got {type(content).__name__}: {content!r}"
+    )
 
 
 def send_event(session_id: str, event: dict) -> None:
@@ -265,31 +280,59 @@ def session_status(session_id: str) -> str:
     return "unknown"
 
 
+# stop_reason values that mean the agent finished cleanly. Anything else
+# on a `session.status_idle` event indicates the agent halted needing
+# action it couldn't take (`requires_action`) or exhausted its retry budget
+# (`retries_exhausted`) — those are NOT successful trial outcomes and the
+# caller should treat them as errors. Mirrors the production constants in
+# `poller/poller/adapters/anthropic_sessions.py`.
+_STOP_REASON_END_TURN = "end_turn"
+_CLEAN_STOP_REASONS = {_STOP_REASON_END_TURN}
+
+
+def _normalize_stop_reason(raw) -> str | None:
+    """The SDK serializes `stop_reason` as `{"type": "end_turn"}` (a dict).
+
+    Earlier versions of this code did `f"idle:{stop}"` directly on the dict,
+    producing useless status strings like `"idle:{'type': 'end_turn'}"`.
+    Always extract `.type` so callers can reason about the value as a string.
+    """
+    if isinstance(raw, dict):
+        t = raw.get("type")
+        return t if isinstance(t, str) else None
+    if isinstance(raw, str):
+        return raw
+    return None
+
+
 def poll_until_idle(session_id: str, timeout_seconds: int, sleep_seconds: int = 5) -> tuple[bool, str]:
-    """Polls until a `session.status_idle` event appears in the event stream.
+    """Polls until a terminal session event appears in the event stream.
 
-    We watch for the *event* (which is only emitted after the agent finishes
-    a turn), not the `status` field on the session record — that field
-    briefly reads `idle` between session creation and kickoff dispatch, so
-    polling it races the user.message ingest and exits prematurely.
+    We watch for the *event* (only emitted after the agent finishes a turn),
+    not the `status` field on the session record — that field briefly reads
+    `idle` between session creation and kickoff dispatch, so polling it
+    races the user.message ingest and exits prematurely.
 
-    Returns `(reached_idle, last_status)` where last_status is `"idle"` (with
-    optional stop_reason annotation), `"timeout"`, or `"terminated"`.
+    Returns `(reached_clean_idle, status_label)`:
+      - `(True,  "idle:end_turn")` — clean finish; downstream can capture envelope
+      - `(False, "idle:requires_action")` / `(False, "idle:retries_exhausted")` —
+        agent halted, NOT a clean trial; envelope likely partial or absent
+      - `(False, "terminated")` — unrecoverable session error
+      - `(False, "timeout")` — deadline exceeded without any terminal event
     """
     deadline = time.time() + timeout_seconds
     while time.time() < deadline:
         events = list_events(session_id)
-        # Walk forward — `session.status_idle` events accumulate across turns
-        # but for a single-shot kickoff there's at most one.
         for e in events:
             if not isinstance(e, dict):
                 continue
             t = e.get("type")
             if t == "session.status_idle":
-                stop = e.get("stop_reason")
-                return True, f"idle:{stop}" if stop else "idle"
+                stop = _normalize_stop_reason(e.get("stop_reason"))
+                label = f"idle:{stop}" if stop else "idle"
+                return stop in _CLEAN_STOP_REASONS, label
             if t == "session.status_terminated":
-                return True, "terminated"
+                return False, "terminated"
         time.sleep(sleep_seconds)
     return False, "timeout"
 
