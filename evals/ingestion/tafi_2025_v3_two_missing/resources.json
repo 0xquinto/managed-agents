@@ -1,0 +1,29 @@
+{
+  "_comment": "Same Tafi 2025 case as the v3 slice but adds 'memoria' to required_documents to validate v3.2 generalizes to multiple missing items + names outside v3.2 iteration history. Inherits PDF + CSV file_ids.",
+  "files": [
+    {
+      "file_id_param": "tafi_pdf",
+      "mount_path": "input/tafi_2025_v3_two_missing/Borrador de EF 2025 - Financiera Tafi - MICI.pdf",
+      "default_file_id": "file_011CaaVTNcQEKbg4Dt1vCcCF",
+      "description": "Tafi 2025 financial statement PDF (inherited from v3 slice)"
+    },
+    {
+      "file_id_param": "tafi_csv",
+      "mount_path": "input/tafi_2025_v3_two_missing/Cartera Total TAFI.csv",
+      "default_file_id": "file_011CaaVTupcqW1ZuPvi63z1M",
+      "description": "Tafi cumulative loan portfolio CSV (inherited from v3 slice)"
+    }
+  ],
+  "memory_stores": [
+    {
+      "memory_store_id_param": "insignia_memory",
+      "default_memory_store_id": null,
+      "access": "read_only",
+      "_comment": "Auto-mounts at /mnt/memory/<kebab-cased-store-name>/. Override via --memory-store insignia_memory=mem_xxx."
+    }
+  ],
+  "container_paths_to_capture": [
+    "/mnt/session/out/tafi_2025_v3_two_missing/manifest.json"
+  ],
+  "_omitted_intentionally": "Both dictamen del auditor AND memoria de cálculos are intentionally absent. Agent must report both in missing_fields and draft an email asking for both."
+}

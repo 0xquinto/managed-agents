@@ -1,0 +1,107 @@
+{
+  "case_id": "ingestion/tafi_2025_v3_two_missing",
+  "schema_version": 3,
+  "slice_version": "0.1.0",
+  "description": "Validates v3.2 generalizes to (a) multiple missing items, (b) document names not in v3.2 iteration history (memoria).",
+  "based_on": "ingestion/tafi_2025_v3",
+  "envelope": [
+    {
+      "field": "status",
+      "type": "exact",
+      "value": "blocked",
+      "column": "process",
+      "rationale": "two required docs absent → blocked"
+    },
+    {
+      "field": "missing_fields",
+      "type": "is_superset_of",
+      "values": ["dictamen", "memoria"],
+      "column": "process",
+      "rationale": "must list at least both missing items; agent may add more if it judges other items absent"
+    }
+  ],
+  "envelope_format": [
+    {
+      "type": "no_markdown_fences",
+      "column": "process"
+    },
+    {
+      "type": "no_surrounding_prose",
+      "column": "process"
+    }
+  ],
+  "outputs": [
+    {
+      "type": "file_exists_and_nonempty",
+      "path": "/mnt/session/out/tafi_2025_v3_two_missing/manifest.json",
+      "format": "json",
+      "column": "outcome"
+    }
+  ],
+  "manifest": {
+    "required_keys": [
+      "entity",
+      "periods",
+      "pdf_extraction",
+      "csv_extraction",
+      "quality_flags",
+      "reconciliations",
+      "missing_fields",
+      "outputs",
+      "client_email_draft"
+    ],
+    "field_assertions": [
+      {
+        "field": "client_email_draft",
+        "type": "is_object",
+        "column": "process",
+        "rationale": "blocked-status manifest with missing_fields non-empty MUST populate the draft"
+      },
+      {
+        "field": "client_email_draft.language",
+        "type": "exact",
+        "value": "es",
+        "column": "outcome",
+        "rationale": "must match email_context.language"
+      },
+      {
+        "field": "client_email_draft.body",
+        "type": "min_length",
+        "value": 50,
+        "column": "outcome",
+        "rationale": "spec § 6.3: body < 50 chars is a hard reject"
+      },
+      {
+        "field": "client_email_draft.body",
+        "type": "must_not_contain",
+        "values": ["TBD", "TODO", "[…]"],
+        "column": "outcome",
+        "rationale": "spec § 6.3: any forbidden substring is a hard reject"
+      },
+      {
+        "field": "client_email_draft.body",
+        "type": "contains_all_substrings_ci",
+        "values": ["dictamen", "memoria"],
+        "column": "outcome",
+        "rationale": "the draft must reference BOTH missing items by name; collapsing into a single generic mention defeats the email-loop"
+      },
+      {
+        "field": "client_email_draft.missing_fields_referenced",
+        "type": "is_superset_of",
+        "values": ["dictamen", "memoria"],
+        "column": "process",
+        "rationale": "missing_fields_referenced must include both items the email asks about"
+      },
+      {
+        "field": "client_email_draft.missing_fields_referenced",
+        "type": "is_subset_of_field",
+        "of_field": "missing_fields",
+        "column": "process",
+        "rationale": "spec § 4.5 + ManifestV3: referenced ⊆ envelope's missing_fields"
+      }
+    ]
+  },
+  "reconciliations": {
+    "_note": "Inherits parent slice's no-op stance — does not check reconciliations."
+  }
+}

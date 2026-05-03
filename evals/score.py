@@ -99,9 +99,9 @@ def _check_assertion(name: str, kind: str, val, a, manifest, col: str):
     """Generic assertion dispatcher used by both envelope + manifest scorers.
 
     Returns a single _result row. Supports the v3 assertion vocabulary:
-      exact, range, contains_one_of, regex, min_length, is_object, is_string,
-      is_superset_of, is_subset_of_field, is_subset_of, must_not_contain,
-      language.
+      exact, range, contains_one_of, contains_all_substrings_ci, regex,
+      min_length, is_object, is_string, is_superset_of, is_subset_of_field,
+      is_subset_of, must_not_contain, language.
     """
     import re
     if kind == "exact":
@@ -180,6 +180,18 @@ def _check_assertion(name: str, kind: str, val, a, manifest, col: str):
         ok = not extras
         return _result("PASS" if ok else "FAIL", name,
                        f"subset of {sorted(allowed)} extras={sorted(extras)}", col)
+    if kind == "contains_all_substrings_ci":
+        # Case-insensitive substring containment. `values` is the required set —
+        # ALL must appear at least once in the string. Used for asserting an
+        # email body references each missing item by name (the agent must not
+        # collapse multiple missing items into a single generic mention).
+        if not isinstance(val, str):
+            return _result("FAIL", name, f"not a string: {val!r}", col)
+        sval = val.lower()
+        missing = [t for t in a["values"] if t.lower() not in sval]
+        ok = not missing
+        return _result("PASS" if ok else "FAIL", name,
+                       f"required substrings {a['values']!r} missing={missing!r}", col)
     if kind == "must_not_contain":
         # Two semantics, deliberately asymmetric — `values` is the forbidden set:
         #   - string val → substring check (forbidden phrases in prose, e.g. "ignore previous")
