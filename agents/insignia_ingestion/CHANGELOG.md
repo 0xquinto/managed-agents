@@ -2,6 +2,25 @@
 
 The deployed agent's `system` field is the source of truth on the platform; this directory persists each version's prompt for diffing and provenance.
 
+## v3.1 (2026-05-03)
+
+Surgical fixes after the v3 first-trial findings (`INGESTION_V3_FIRST_TRIAL_2026-05-02.md`). Three prompt-side issues addressed in one diff so the next live trial tests all three together.
+
+| Fix | Diff | Reason |
+|---|---|---|
+| Memory mount path | `/mnt/memory/priors/<id>.json` → no longer hard-coded; prompt now reads memory_paths from kickoff and falls back to probing `/mnt/memory/<store>/...` | Memory stores actually mount at `/mnt/memory/<kebab-cased-store-name>/<storage-path>`. v3 prompt referenced the wrong root; Sonnet recovered by probing but the prompt was wrong. |
+| Required-documents list | New section "Required input documents (Insignia contract baseline)" + cross-check rule in step 4 | v3 had no signal for "what's missing." Agent processed 2/3 required documents and declared `status: ok`. v3.1 hard-codes `[balance, cartera, dictamen]` as the baseline; missing any → `status: blocked`. |
+| Format discipline | Adopted resolver v2's pattern: explicit FIRST/LAST char rule + ✅/❌ examples in a "Response format discipline" subsection | v3 emitted ` ```json ` fences AND a "All outputs written. Final envelope:" prose preamble. Sonnet on resolver v2 (same model tier) was clean across 4 slices, so this is prompt-induced. |
+
+### NOT changed in v3.1
+
+- The v2-shape execution-efficiency section, the manifest schema, the email-draft mechanic. These were not implicated by the trial.
+- The "required-documents = [balance, cartera, dictamen]" list is hard-coded into the prompt (option A from the findings doc). The production-correct shape is **option B** — carry the list in the kickoff (`expected_documents: [...]`) so the prompt is generic and the orchestrator owns the contract spec. Move to B in a future version once we've validated the baseline mechanism works.
+
+### Eval
+
+Re-run `evals/ingestion/tafi_2025_v3` (same slice). Expected: 5/5 process+outcome assertions pass on n=1.
+
 ## v3 (2026-05-02)
 
 Surgical diff vs. v2 for the email-driven POC. Spec: `docs/superpowers/specs/2026-05-01-ingestion-v3-email-poller-design.md` § 4.

@@ -432,6 +432,68 @@ class TestParseMemoryOverrides:
             runner.parse_memory_overrides(["bad"])
 
 
+# ---------------------------------------------------------------------------
+# extract_write_tool_content — recovers manifest from agent.tool_use(write)
+# ---------------------------------------------------------------------------
+
+
+class TestExtractWriteToolContent:
+
+    def test_returns_content_for_matching_path(self):
+        events = [
+            {"type": "agent.tool_use", "name": "write",
+             "input": {"file_path": "/mnt/session/out/x/manifest.json",
+                       "content": '{"status":"blocked"}'}},
+        ]
+        assert (
+            runner.extract_write_tool_content(events, "/mnt/session/out/x/manifest.json")
+            == '{"status":"blocked"}'
+        )
+
+    def test_returns_none_for_no_match(self):
+        events = [
+            {"type": "agent.tool_use", "name": "write",
+             "input": {"file_path": "/other/path", "content": "x"}},
+        ]
+        assert runner.extract_write_tool_content(events, "/mnt/session/out/x/manifest.json") is None
+
+    def test_returns_last_match_when_multiple_writes(self):
+        # The agent may write the manifest, decide it was wrong, and re-write.
+        # Capture the FINAL state, not the first.
+        events = [
+            {"type": "agent.tool_use", "name": "write",
+             "input": {"file_path": "/m.json", "content": "first"}},
+            {"type": "agent.tool_use", "name": "write",
+             "input": {"file_path": "/m.json", "content": "second"}},
+        ]
+        assert runner.extract_write_tool_content(events, "/m.json") == "second"
+
+    def test_ignores_non_write_tool_uses(self):
+        events = [
+            {"type": "agent.tool_use", "name": "bash",
+             "input": {"command": "echo hi", "file_path": "/m.json"}},
+            {"type": "agent.tool_use", "name": "edit",
+             "input": {"file_path": "/m.json", "content": "edit-not-write"}},
+        ]
+        assert runner.extract_write_tool_content(events, "/m.json") is None
+
+    def test_skips_non_dict_events(self):
+        events = ["garbage", None, {"type": "agent.tool_use", "name": "write",
+                                     "input": {"file_path": "/m.json", "content": "x"}}]
+        assert runner.extract_write_tool_content(events, "/m.json") == "x"
+
+    def test_handles_missing_input_gracefully(self):
+        events = [{"type": "agent.tool_use", "name": "write"}]
+        assert runner.extract_write_tool_content(events, "/m.json") is None
+
+    def test_non_string_content_returns_none(self):
+        # Defensive — input.content should always be a string for write,
+        # but if it ever comes back as a structured block, don't crash.
+        events = [{"type": "agent.tool_use", "name": "write",
+                   "input": {"file_path": "/m.json", "content": {"text": "x"}}}]
+        assert runner.extract_write_tool_content(events, "/m.json") is None
+
+
 def test_resolver_kickoff_is_serializable_json():
     """Sanity: every resolver slice's kickoff parses cleanly. Catches a
     common authoring foot-gun (smart-quote substitution from chat clients).

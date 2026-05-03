@@ -431,6 +431,34 @@ def fetch_container_file(session_id: str, container_path: str) -> str | None:
     return None
 
 
+def extract_write_tool_content(events: list[dict], container_path: str) -> str | None:
+    """Recover a file's content from the agent's `write` tool_use event.
+
+    Per v3 ingestion prompt: the agent writes the manifest via the `write`
+    tool, so the full content lives in the `agent.tool_use` event's
+    `input.content`. Cheaper and more reliable than firing a follow-up
+    bash turn (the live trial on 2026-05-02 showed fetch_container_file
+    returning None despite the write succeeding).
+
+    Returns the content string from the LAST matching write event, or None.
+    """
+    last: str | None = None
+    for e in events:
+        if not isinstance(e, dict):
+            continue
+        if e.get("type") != "agent.tool_use":
+            continue
+        if e.get("name") != "write":
+            continue
+        inp = e.get("input") or {}
+        if inp.get("file_path") != container_path:
+            continue
+        content = inp.get("content")
+        if isinstance(content, str):
+            last = content
+    return last
+
+
 # ------------------------- Run orchestration -------------------------
 
 
@@ -486,15 +514,21 @@ def run_trial(case_dir: Path, paraphrase: str, trial_idx: int, agent_id: str, en
         # Resolver agents return envelope-only — no container artifacts to fetch.
         for container_path in container_paths if role != "resolver" else []:
             fname = container_path.split("/")[-1]
-            try:
-                content = fetch_container_file(session_id, container_path)
-            except Exception as e:
-                content = None
-                print(f"  warn: fetch {container_path} raised {e}", file=sys.stderr)
+            # Try the write-tool fast path first (no extra session turn).
+            content = extract_write_tool_content(events, container_path)
+            source = "write_event" if content else None
+            if not content:
+                try:
+                    content = fetch_container_file(session_id, container_path)
+                    source = "bash_fallback" if content else None
+                except Exception as e:
+                    content = None
+                    print(f"  warn: fetch {container_path} raised {e}", file=sys.stderr)
             if content:
                 (trial_dir / fname).write_text(content)
                 if fname == "manifest.json":
                     summary["manifest_captured"] = True
+                    summary["manifest_source"] = source
 
         if not reached_idle:
             summary["error"] = f"timeout after {timeout_seconds}s; final status {final_status!r}"

@@ -416,11 +416,17 @@ def score_quality_flags(expected, manifest):
 
 def score_reconciliations(expected, manifest):
     out = []
+    rec = expected.get("reconciliations", [])
+    # The v3 ingestion slice uses a dict with `_note` to mark "this slice
+    # doesn't check reconciliations" — accept that shape as no-op rather
+    # than iterating its keys as if they were assertion specs.
+    if isinstance(rec, dict):
+        return out
     if manifest is None:
-        if expected.get("reconciliations"):
+        if rec:
             out.append(_result("SKIP", "reconciliations", "manifest.json not present", "environment"))
         return out
-    for a in expected.get("reconciliations", []):
+    for a in rec:
         col = a.get("column", "outcome")
         field, kind = a["field"], a["type"]
         found, val = get_field(manifest, field)
